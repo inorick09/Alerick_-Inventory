@@ -31,16 +31,22 @@ create table if not exists compras (
 create table if not exists ventas (
   id uuid primary key default gen_random_uuid(),
   producto_id uuid references productos(id) on delete set null,
+  nombre_producto text,
   cantidad numeric not null default 0,
   precio_venta numeric not null default 0,
   valor_total numeric not null default 0,
   cliente text,
   fecha_entrega date not null default current_date,
+  fecha_pago date,
   abono numeric default 0,
   saldo numeric default 0,
   metodo_pago text,
   created_at timestamptz default now()
 );
+
+-- Si la tabla ventas ya existía antes de agregar nombre_producto y fecha_pago, ejecuta estas líneas:
+alter table ventas add column if not exists nombre_producto text;
+alter table ventas add column if not exists fecha_pago date;
 
 -- Habilita el acceso en tiempo real (para que ambos vean los cambios del otro al instante)
 alter publication supabase_realtime add table productos;

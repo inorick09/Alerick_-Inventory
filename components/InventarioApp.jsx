@@ -101,8 +101,8 @@ export default function InventarioApp() {
   }
   async function addVenta(v) {
     const { error } = await supabase.from("ventas").insert({
-      producto_id: v.productoId, cantidad: v.cantidad, precio_venta: v.precioVenta, valor_total: v.valorTotal,
-      cliente: v.cliente, fecha_entrega: v.fechaEntrega, abono: v.abono, saldo: v.saldo, metodo_pago: v.metodoPago,
+      nombre_producto: v.nombreProducto, cantidad: v.cantidad, precio_venta: v.precioVenta, valor_total: v.valorTotal,
+      cliente: v.cliente, fecha_entrega: v.fechaEntrega, fecha_pago: v.fechaPago || null, abono: v.abono, saldo: v.saldo, metodo_pago: v.metodoPago,
     });
     if (error) setError("No se pudo guardar la venta.");
     else fetchAll();
@@ -110,6 +110,14 @@ export default function InventarioApp() {
   async function deleteVenta(id) {
     const { error } = await supabase.from("ventas").delete().eq("id", id);
     if (error) setError("No se pudo eliminar la venta.");
+  }
+  async function updateFechaPago(id, fechaPago) {
+    setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, fecha_pago: fechaPago } : v)));
+    const { error } = await supabase.from("ventas").update({ fecha_pago: fechaPago || null }).eq("id", id);
+    if (error) {
+      setError("No se pudo actualizar la fecha de pago.");
+      fetchAll();
+    }
   }
 
   if (loading) {
@@ -152,7 +160,7 @@ export default function InventarioApp() {
           <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onAddProducto={addProducto} />
         )}
         {tab === "ventas" && (
-          <VentasTab productos={productos} ventas={ventas} onAdd={addVenta} onDelete={deleteVenta} />
+          <VentasTab ventas={ventas} onAdd={addVenta} onDelete={deleteVenta} onUpdateFechaPago={updateFechaPago} />
         )}
       </main>
     </div>
@@ -391,62 +399,49 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onAddProducto }) {
 }
 
 /* ---------------- VENTAS ---------------- */
-function VentasTab({ productos, ventas, onAdd, onDelete }) {
+function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago }) {
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ productoId: "", cantidad: "1", precioVenta: "", cliente: "", fechaEntrega: today(), abono: "", metodoPago: "Efectivo" });
+  const [form, setForm] = useState({ nombreProducto: "", cantidad: "1", precioVenta: "", cliente: "", fechaEntrega: today(), fechaPago: "", abono: "", metodoPago: "Efectivo" });
 
-  const totalVentas = ventas.reduce((s, v) => s + Number(v.valor_total || 0), 0);
+  const totalAbonos = ventas.reduce((s, v) => s + Number(v.abono || 0), 0);
   const totalSaldo = ventas.reduce((s, v) => s + Number(v.saldo || 0), 0);
-  const selectedProducto = productos.find((p) => p.id === form.productoId);
-
-  function onSelectProducto(id) {
-    const p = productos.find((x) => x.id === id);
-    setForm({ ...form, productoId: id, precioVenta: p ? p.precio_venta || "" : "" });
-  }
 
   function submit(e) {
     e.preventDefault();
-    if (!form.productoId) return;
+    if (!form.nombreProducto.trim()) return;
     const cantidad = Number(form.cantidad) || 0;
     const precioVenta = Number(form.precioVenta) || 0;
     const valorTotal = cantidad * precioVenta;
     const abono = Number(form.abono) || 0;
     onAdd({
-      productoId: form.productoId, cantidad, precioVenta, valorTotal,
-      cliente: form.cliente.trim(), fechaEntrega: form.fechaEntrega, abono,
+      nombreProducto: form.nombreProducto.trim(), cantidad, precioVenta, valorTotal,
+      cliente: form.cliente.trim(), fechaEntrega: form.fechaEntrega, fechaPago: form.fechaPago, abono,
       saldo: Math.max(valorTotal - abono, 0), metodoPago: form.metodoPago,
     });
-    setForm({ productoId: "", cantidad: "1", precioVenta: "", cliente: "", fechaEntrega: today(), abono: "", metodoPago: "Efectivo" });
+    setForm({ nombreProducto: "", cantidad: "1", precioVenta: "", cliente: "", fechaEntrega: today(), fechaPago: "", abono: "", metodoPago: "Efectivo" });
     setShowForm(false);
   }
 
-  const productoNombre = (id) => productos.find((p) => p.id === id)?.nombre || "(producto eliminado)";
   const sorted = [...ventas];
-  const cantidadDisponible = selectedProducto ? Number(selectedProducto.cantidad) || 0 : null;
 
   return (
     <div>
       <div style={styles.statRow}>
         <StatCard label="Ventas registradas" value={ventas.length} />
-        <StatCard label="Total vendido" value={fmt(totalVentas)} />
+        <StatCard label="Total vendido" value={fmt(totalAbonos)} />
         <StatCard label="Saldo por cobrar" value={fmt(totalSaldo)} accent />
       </div>
 
       <div style={styles.toolbar}>
         <div />
-        <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)} disabled={productos.length === 0}><Plus size={16} /> Registrar venta</button>
+        <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar venta</button>
       </div>
-      {productos.length === 0 && <p style={styles.hintText}>Agrega productos en la pestaña Inventario antes de registrar una venta.</p>}
 
       {showForm && (
         <form onSubmit={submit} style={styles.card}>
           <div style={styles.formGrid}>
             <Field label="Producto *" wide>
-              <select style={styles.input} value={form.productoId} onChange={(e) => onSelectProducto(e.target.value)} required>
-                <option value="">Selecciona un producto…</option>
-                {productos.map((p) => <option key={p.id} value={p.id}>{p.nombre} — cantidad: {Number(p.cantidad) || 0}</option>)}
-              </select>
-              {selectedProducto && cantidadDisponible <= 0 && <span style={styles.warnText}>Este producto no tiene cantidad registrada.</span>}
+              <input style={styles.input} value={form.nombreProducto} onChange={(e) => setForm({ ...form, nombreProducto: e.target.value })} placeholder="Nombre del producto" required />
             </Field>
             <Field label="Cantidad *">
               <input type="number" min="1" style={styles.input} value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} required />
@@ -459,6 +454,9 @@ function VentasTab({ productos, ventas, onAdd, onDelete }) {
             </Field>
             <Field label="Fecha de entrega">
               <input type="date" style={styles.input} value={form.fechaEntrega} onChange={(e) => setForm({ ...form, fechaEntrega: e.target.value })} />
+            </Field>
+            <Field label="Fecha de pago">
+              <input type="date" style={styles.input} value={form.fechaPago} onChange={(e) => setForm({ ...form, fechaPago: e.target.value })} />
             </Field>
             <Field label="Abono recibido">
               <input type="number" min="0" style={styles.input} value={form.abono} onChange={(e) => setForm({ ...form, abono: e.target.value })} />
@@ -482,20 +480,23 @@ function VentasTab({ productos, ventas, onAdd, onDelete }) {
             <tr>
               <th style={styles.th}>Entrega</th><th style={styles.th}>Producto</th><th style={styles.th}>Cant.</th>
               <th style={styles.th}>Total</th><th style={styles.th}>Cliente</th><th style={styles.th}>Abono</th>
-              <th style={styles.th}>Saldo</th><th style={styles.th}>Pago</th><th style={styles.th}></th>
+              <th style={styles.th}>Saldo</th><th style={styles.th}>Fecha pago</th><th style={styles.th}>Pago</th><th style={styles.th}></th>
             </tr>
           </thead>
           <tbody>
-            {sorted.length === 0 && <tr><td colSpan={9} style={styles.emptyCell}>Aún no has registrado ventas.</td></tr>}
+            {sorted.length === 0 && <tr><td colSpan={10} style={styles.emptyCell}>Aún no has registrado ventas.</td></tr>}
             {sorted.map((v) => (
               <tr key={v.id}>
                 <td style={styles.tdMuted}>{fmtDate(v.fecha_entrega)}</td>
-                <td style={styles.td}><strong>{productoNombre(v.producto_id)}</strong></td>
+                <td style={styles.td}><strong>{v.nombre_producto || "—"}</strong></td>
                 <td style={styles.td}>{v.cantidad}</td>
                 <td style={styles.td}>{fmt(v.valor_total)}</td>
                 <td style={styles.tdMuted}>{v.cliente || "—"}</td>
                 <td style={styles.td}>{fmt(v.abono)}</td>
                 <td style={styles.td}><span style={{ ...styles.stockPill, ...(v.saldo > 0 ? styles.stockLow : {}) }}>{fmt(v.saldo)}</span></td>
+                <td style={styles.td}>
+                  <FechaPagoInput value={v.fecha_pago} onSave={(nueva) => onUpdateFechaPago(v.id, nueva)} />
+                </td>
                 <td style={styles.tdMuted}>{v.metodo_pago}</td>
                 <td style={styles.td}><button style={styles.iconBtn} onClick={() => onDelete(v.id)} title="Eliminar venta"><Trash2 size={15} /></button></td>
               </tr>
@@ -570,6 +571,27 @@ function CantidadInput({ value, onSave, low }) {
     />
   );
 }
+function FechaPagoInput({ value, onSave }) {
+  const [draft, setDraft] = useState(value || "");
+
+  useEffect(() => {
+    setDraft(value || "");
+  }, [value]);
+
+  function commit() {
+    if (draft !== (value || "")) onSave(draft);
+  }
+
+  return (
+    <input
+      type="date"
+      style={{ ...styles.priceInput, width: 140 }}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+    />
+  );
+}
 function Field({ label, children, wide }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, gridColumn: wide ? "1 / -1" : "auto" }}>
@@ -613,8 +635,6 @@ const styles = {
   priceInput: { border: "1px solid #EEDEE0", borderRadius: 8, padding: "6px 8px", fontSize: 13, fontFamily: "'Poppins', sans-serif", background: "#fff", color: "#3B2A33", outline: "none", width: 110, boxSizing: "border-box" },
   priceInputLow: { borderColor: "#E7CFA0", background: "#FCF1DC", color: "#A9791F" },
   inlineRow: { display: "flex", gap: 8, alignItems: "center" },
-  warnText: { fontSize: 11.5, color: "#B4453F", marginTop: 4 },
-  hintText: { fontSize: 12.5, color: "#8B6B76", marginTop: -8, marginBottom: 16 },
   tableWrap: { overflowX: "auto", border: "1px solid #EEDEE0", borderRadius: 12 },
   table: { width: "100%", borderCollapse: "collapse", fontSize: 13 },
   th: { textAlign: "left", padding: "10px 14px", background: "#FBF3F1", color: "#8B6B76", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3, fontWeight: 600, borderBottom: "1px solid #EEDEE0" },
