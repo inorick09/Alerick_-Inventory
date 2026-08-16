@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle } from "lucide-react";
+import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle, SlidersHorizontal } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const fmt = (n) =>
@@ -119,6 +119,14 @@ export default function InventarioApp() {
       fetchAll();
     }
   }
+  async function updateFechaEntrega(id, fechaEntrega) {
+    setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, fecha_entrega: fechaEntrega } : v)));
+    const { error } = await supabase.from("ventas").update({ fecha_entrega: fechaEntrega }).eq("id", id);
+    if (error) {
+      setError("No se pudo actualizar la fecha de entrega.");
+      fetchAll();
+    }
+  }
   async function updateAbono(id, abono) {
     const venta = ventas.find((v) => v.id === id);
     if (!venta) return;
@@ -171,7 +179,7 @@ export default function InventarioApp() {
           <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onAddProducto={addProducto} />
         )}
         {tab === "ventas" && (
-          <VentasTab ventas={ventas} onAdd={addVenta} onDelete={deleteVenta} onUpdateFechaPago={updateFechaPago} onUpdateAbono={updateAbono} />
+          <VentasTab ventas={ventas} onAdd={addVenta} onDelete={deleteVenta} onUpdateFechaPago={updateFechaPago} onUpdateFechaEntrega={updateFechaEntrega} onUpdateAbono={updateAbono} />
         )}
       </main>
     </div>
@@ -410,8 +418,12 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onAddProducto }) {
 }
 
 /* ---------------- VENTAS ---------------- */
-function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateAbono }) {
+const VENTAS_FILTROS_VACIOS = { cliente: "", producto: "", fechaPago: "", soloConSaldo: false };
+
+function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEntrega, onUpdateAbono }) {
   const [showForm, setShowForm] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState(VENTAS_FILTROS_VACIOS);
   const [form, setForm] = useState({ nombreProducto: "", cantidad: "1", precioVenta: "", cliente: "", fechaEntrega: today(), fechaPago: "", abono: "", metodoPago: "Efectivo" });
 
   const totalAbonos = ventas.reduce((s, v) => s + Number(v.abono || 0), 0);
@@ -433,7 +445,18 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateAbono }
     setShowForm(false);
   }
 
-  const sorted = [...ventas];
+  const filtrosActivos =
+    filters.cliente.trim() !== "" || filters.producto.trim() !== "" || filters.fechaPago !== "" || filters.soloConSaldo;
+
+  const filtered = ventas.filter((v) => {
+    if (filters.cliente.trim() && !(v.cliente || "").toLowerCase().includes(filters.cliente.trim().toLowerCase())) return false;
+    if (filters.producto.trim() && !(v.nombre_producto || "").toLowerCase().includes(filters.producto.trim().toLowerCase())) return false;
+    if (filters.fechaPago && v.fecha_pago !== filters.fechaPago) return false;
+    if (filters.soloConSaldo && !((Number(v.saldo) || 0) > 0)) return false;
+    return true;
+  });
+
+  const sorted = [...filtered];
 
   return (
     <div>
@@ -444,9 +467,36 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateAbono }
       </div>
 
       <div style={styles.toolbar}>
-        <div />
+        <button style={{ ...styles.ghostBtn, ...(filtrosActivos ? styles.ghostBtnActive : {}) }} onClick={() => setShowFilters((s) => !s)}>
+          <SlidersHorizontal size={15} /> Filtros{filtrosActivos ? " •" : ""}
+        </button>
         <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar venta</button>
       </div>
+
+      {showFilters && (
+        <div style={styles.card}>
+          <div style={styles.formGrid}>
+            <Field label="Cliente">
+              <input style={styles.input} value={filters.cliente} onChange={(e) => setFilters({ ...filters, cliente: e.target.value })} placeholder="Buscar por cliente…" />
+            </Field>
+            <Field label="Producto">
+              <input style={styles.input} value={filters.producto} onChange={(e) => setFilters({ ...filters, producto: e.target.value })} placeholder="Buscar por producto…" />
+            </Field>
+            <Field label="Fecha de pago">
+              <input type="date" style={styles.input} value={filters.fechaPago} onChange={(e) => setFilters({ ...filters, fechaPago: e.target.value })} />
+            </Field>
+            <Field label="Saldo">
+              <label style={styles.checkboxRow}>
+                <input type="checkbox" checked={filters.soloConSaldo} onChange={(e) => setFilters({ ...filters, soloConSaldo: e.target.checked })} />
+                Solo con saldo pendiente
+              </label>
+            </Field>
+          </div>
+          <div style={styles.formActions}>
+            <button type="button" style={styles.ghostBtn} onClick={() => setFilters(VENTAS_FILTROS_VACIOS)}>Limpiar filtros</button>
+          </div>
+        </div>
+      )}
 
       {showForm && (
         <form onSubmit={submit} style={styles.card}>
@@ -495,19 +545,27 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateAbono }
             </tr>
           </thead>
           <tbody>
-            {sorted.length === 0 && <tr><td colSpan={10} style={styles.emptyCell}>Aún no has registrado ventas.</td></tr>}
+            {sorted.length === 0 && (
+              <tr><td colSpan={10} style={styles.emptyCell}>{filtrosActivos ? "Ningún resultado coincide con los filtros." : "Aún no has registrado ventas."}</td></tr>
+            )}
             {sorted.map((v) => (
               <tr key={v.id}>
                 <td style={styles.td}><strong>{v.nombre_producto || "—"}</strong></td>
                 <td style={styles.td}>{v.cantidad}</td>
                 <td style={styles.tdMuted}>{v.cliente || "—"}</td>
                 <td style={styles.td}>{fmt(v.valor_total)}</td>
-                <td style={styles.tdMuted}>{fmtDate(v.fecha_entrega)}</td>
+                <td style={styles.td}>
+                  <FechaPagoInput value={v.fecha_entrega} onSave={(nueva) => onUpdateFechaEntrega(v.id, nueva)} />
+                </td>
                 <td style={styles.td}>
                   <FechaPagoInput value={v.fecha_pago} onSave={(nueva) => onUpdateFechaPago(v.id, nueva)} />
                 </td>
                 <td style={styles.td}>
-                  <PrecioVentaInput value={v.abono} onSave={(nuevo) => onUpdateAbono(v.id, nuevo)} />
+                  {Number(v.saldo) !== 0 ? (
+                    <PrecioVentaInput value={v.abono} onSave={(nuevo) => onUpdateAbono(v.id, nuevo)} />
+                  ) : (
+                    fmt(v.abono)
+                  )}
                 </td>
                 <td style={styles.td}><span style={{ ...styles.stockPill, ...(v.saldo > 0 ? styles.stockLow : {}) }}>{fmt(v.saldo)}</span></td>
                 <td style={styles.tdMuted}>{v.metodo_pago}</td>
@@ -638,7 +696,9 @@ const styles = {
   searchBox: { display: "flex", alignItems: "center", gap: 8, background: "#FBF3F1", border: "1px solid #EEDEE0", borderRadius: 10, padding: "8px 12px", flex: 1, maxWidth: 320 },
   searchInput: { border: "none", outline: "none", background: "transparent", fontSize: 13.5, fontFamily: "'Poppins', sans-serif", width: "100%", color: "#3B2A33" },
   primaryBtn: { display: "flex", alignItems: "center", gap: 6, background: "#D9678C", color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Poppins', sans-serif" },
-  ghostBtn: { background: "transparent", border: "1px solid #EEDEE0", color: "#8B6B76", borderRadius: 9, padding: "9px 16px", fontSize: 13.5, cursor: "pointer", fontFamily: "'Poppins', sans-serif" },
+  ghostBtn: { display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "1px solid #EEDEE0", color: "#8B6B76", borderRadius: 9, padding: "9px 16px", fontSize: 13.5, cursor: "pointer", fontFamily: "'Poppins', sans-serif" },
+  ghostBtnActive: { borderColor: "#D9678C", color: "#B84C71", background: "#FCEFE0" },
+  checkboxRow: { display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: "#3B2A33", fontFamily: "'Poppins', sans-serif" },
   linkBtn: { background: "transparent", border: "none", color: "#B84C71", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" },
   card: { background: "#FBF3F1", border: "1px solid #EEDEE0", borderRadius: 12, padding: 18, marginBottom: 20 },
   formGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 },
