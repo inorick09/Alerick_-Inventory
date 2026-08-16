@@ -119,6 +119,17 @@ export default function InventarioApp() {
       fetchAll();
     }
   }
+  async function updateAbono(id, abono) {
+    const venta = ventas.find((v) => v.id === id);
+    if (!venta) return;
+    const saldo = Math.max(Number(venta.valor_total || 0) - abono, 0);
+    setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, abono, saldo } : v)));
+    const { error } = await supabase.from("ventas").update({ abono, saldo }).eq("id", id);
+    if (error) {
+      setError("No se pudo actualizar el abono.");
+      fetchAll();
+    }
+  }
 
   if (loading) {
     return (
@@ -160,7 +171,7 @@ export default function InventarioApp() {
           <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onAddProducto={addProducto} />
         )}
         {tab === "ventas" && (
-          <VentasTab ventas={ventas} onAdd={addVenta} onDelete={deleteVenta} onUpdateFechaPago={updateFechaPago} />
+          <VentasTab ventas={ventas} onAdd={addVenta} onDelete={deleteVenta} onUpdateFechaPago={updateFechaPago} onUpdateAbono={updateAbono} />
         )}
       </main>
     </div>
@@ -399,7 +410,7 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onAddProducto }) {
 }
 
 /* ---------------- VENTAS ---------------- */
-function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago }) {
+function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateAbono }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ nombreProducto: "", cantidad: "1", precioVenta: "", cliente: "", fechaEntrega: today(), fechaPago: "", abono: "", metodoPago: "Efectivo" });
 
@@ -478,25 +489,27 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago }) {
         <table style={styles.table}>
           <thead>
             <tr>
-              <th style={styles.th}>Entrega</th><th style={styles.th}>Producto</th><th style={styles.th}>Cant.</th>
-              <th style={styles.th}>Total</th><th style={styles.th}>Cliente</th><th style={styles.th}>Abono</th>
-              <th style={styles.th}>Saldo</th><th style={styles.th}>Fecha pago</th><th style={styles.th}>Pago</th><th style={styles.th}></th>
+              <th style={styles.th}>Producto</th><th style={styles.th}>Cantidad</th><th style={styles.th}>Cliente</th>
+              <th style={styles.th}>Total</th><th style={styles.th}>Fecha entrega</th><th style={styles.th}>Fecha de pago</th>
+              <th style={styles.th}>Abono</th><th style={styles.th}>Saldo</th><th style={styles.th}>Pago</th><th style={styles.th}></th>
             </tr>
           </thead>
           <tbody>
             {sorted.length === 0 && <tr><td colSpan={10} style={styles.emptyCell}>Aún no has registrado ventas.</td></tr>}
             {sorted.map((v) => (
               <tr key={v.id}>
-                <td style={styles.tdMuted}>{fmtDate(v.fecha_entrega)}</td>
                 <td style={styles.td}><strong>{v.nombre_producto || "—"}</strong></td>
                 <td style={styles.td}>{v.cantidad}</td>
-                <td style={styles.td}>{fmt(v.valor_total)}</td>
                 <td style={styles.tdMuted}>{v.cliente || "—"}</td>
-                <td style={styles.td}>{fmt(v.abono)}</td>
-                <td style={styles.td}><span style={{ ...styles.stockPill, ...(v.saldo > 0 ? styles.stockLow : {}) }}>{fmt(v.saldo)}</span></td>
+                <td style={styles.td}>{fmt(v.valor_total)}</td>
+                <td style={styles.tdMuted}>{fmtDate(v.fecha_entrega)}</td>
                 <td style={styles.td}>
                   <FechaPagoInput value={v.fecha_pago} onSave={(nueva) => onUpdateFechaPago(v.id, nueva)} />
                 </td>
+                <td style={styles.td}>
+                  <PrecioVentaInput value={v.abono} onSave={(nuevo) => onUpdateAbono(v.id, nuevo)} />
+                </td>
+                <td style={styles.td}><span style={{ ...styles.stockPill, ...(v.saldo > 0 ? styles.stockLow : {}) }}>{fmt(v.saldo)}</span></td>
                 <td style={styles.tdMuted}>{v.metodo_pago}</td>
                 <td style={styles.td}><button style={styles.iconBtn} onClick={() => onDelete(v.id)} title="Eliminar venta"><Trash2 size={15} /></button></td>
               </tr>
