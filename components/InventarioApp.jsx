@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
@@ -62,7 +62,7 @@ export default function InventarioApp() {
 
   async function addProducto(p) {
     const { error } = await supabase.from("productos").insert({
-      nombre: p.nombre, sku: p.sku, categoria: p.categoria, precio_venta: p.precioVenta, costo: p.costo,
+      nombre: p.nombre, sku: p.sku, categoria: p.categoria, cantidad: p.cantidad, precio_venta: p.precioVenta, costo: p.costo,
     });
     if (error) setError("No se pudo guardar el producto.");
     else fetchAll();
@@ -70,6 +70,22 @@ export default function InventarioApp() {
   async function deleteProducto(id) {
     const { error } = await supabase.from("productos").delete().eq("id", id);
     if (error) setError("No se pudo eliminar el producto.");
+  }
+  async function updatePrecioVenta(id, precioVenta) {
+    setProductos((prev) => prev.map((p) => (p.id === id ? { ...p, precio_venta: precioVenta } : p)));
+    const { error } = await supabase.from("productos").update({ precio_venta: precioVenta }).eq("id", id);
+    if (error) {
+      setError("No se pudo actualizar el precio de venta.");
+      fetchAll();
+    }
+  }
+  async function updateCantidad(id, cantidad) {
+    setProductos((prev) => prev.map((p) => (p.id === id ? { ...p, cantidad } : p)));
+    const { error } = await supabase.from("productos").update({ cantidad }).eq("id", id);
+    if (error) {
+      setError("No se pudo actualizar la cantidad.");
+      fetchAll();
+    }
   }
   async function addCompra(c) {
     const { error } = await supabase.from("compras").insert({
@@ -95,14 +111,6 @@ export default function InventarioApp() {
     const { error } = await supabase.from("ventas").delete().eq("id", id);
     if (error) setError("No se pudo eliminar la venta.");
   }
-
-  const stockMap = useMemo(() => {
-    const map = {};
-    productos.forEach((p) => (map[p.id] = 0));
-    compras.forEach((c) => (map[c.producto_id] = (map[c.producto_id] || 0) + Number(c.cantidad || 0)));
-    ventas.forEach((v) => (map[v.producto_id] = (map[v.producto_id] || 0) - Number(v.cantidad || 0)));
-    return map;
-  }, [productos, compras, ventas]);
 
   if (loading) {
     return (
@@ -138,13 +146,13 @@ export default function InventarioApp() {
 
       <main style={styles.main}>
         {tab === "inventario" && (
-          <InventarioTab productos={productos} stockMap={stockMap} onAdd={addProducto} onDelete={deleteProducto} />
+          <InventarioTab productos={productos} onAdd={addProducto} onDelete={deleteProducto} onUpdatePrecioVenta={updatePrecioVenta} onUpdateCantidad={updateCantidad} />
         )}
         {tab === "compras" && (
           <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onAddProducto={addProducto} />
         )}
         {tab === "ventas" && (
-          <VentasTab productos={productos} ventas={ventas} stockMap={stockMap} onAdd={addVenta} onDelete={deleteVenta} />
+          <VentasTab productos={productos} ventas={ventas} onAdd={addVenta} onDelete={deleteVenta} />
         )}
       </main>
     </div>
@@ -160,24 +168,24 @@ function TabButton({ icon: Icon, label, active, onClick }) {
 }
 
 /* ---------------- INVENTARIO ---------------- */
-function InventarioTab({ productos, stockMap, onAdd, onDelete }) {
+function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpdateCantidad }) {
   const [query, setQuery] = useState("");
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ nombre: "", sku: "", categoria: CATEGORIAS[0], precioVenta: "", costo: "" });
+  const [form, setForm] = useState({ nombre: "", sku: "", categoria: CATEGORIAS[0], cantidad: "", precioVenta: "", costo: "" });
 
   const filtered = productos
     .filter((p) => p.nombre.toLowerCase().includes(query.toLowerCase()) || (p.sku || "").toLowerCase().includes(query.toLowerCase()))
     .sort((a, b) => a.nombre.localeCompare(b.nombre));
 
-  const totalUnidades = productos.reduce((s, p) => s + (stockMap[p.id] || 0), 0);
-  const valorInventario = productos.reduce((s, p) => s + (stockMap[p.id] || 0) * (Number(p.costo) || 0), 0);
-  const bajoStock = productos.filter((p) => (stockMap[p.id] || 0) <= 2 && (stockMap[p.id] || 0) >= 0).length;
+  const totalUnidades = productos.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
+  const valorInventario = productos.reduce((s, p) => s + (Number(p.cantidad) || 0) * (Number(p.costo) || 0), 0);
+  const bajoStock = productos.filter((p) => (Number(p.cantidad) || 0) <= 2 && (Number(p.cantidad) || 0) >= 0).length;
 
   function submit(e) {
     e.preventDefault();
     if (!form.nombre.trim()) return;
-    onAdd({ nombre: form.nombre.trim(), sku: form.sku.trim(), categoria: form.categoria, precioVenta: Number(form.precioVenta) || 0, costo: Number(form.costo) || 0 });
-    setForm({ nombre: "", sku: "", categoria: CATEGORIAS[0], precioVenta: "", costo: "" });
+    onAdd({ nombre: form.nombre.trim(), sku: form.sku.trim(), categoria: form.categoria, cantidad: Number(form.cantidad) || 0, precioVenta: Number(form.precioVenta) || 0, costo: Number(form.costo) || 0 });
+    setForm({ nombre: "", sku: "", categoria: CATEGORIAS[0], cantidad: "", precioVenta: "", costo: "" });
     setShowForm(false);
   }
 
@@ -185,9 +193,9 @@ function InventarioTab({ productos, stockMap, onAdd, onDelete }) {
     <div>
       <div style={styles.statRow}>
         <StatCard label="Productos" value={productos.length} />
-        <StatCard label="Unidades en stock" value={totalUnidades} />
+        <StatCard label="Unidades en inventario" value={totalUnidades} />
         <StatCard label="Valor del inventario" value={fmt(valorInventario)} />
-        <StatCard label="Con stock bajo (≤2)" value={bajoStock} accent />
+        <StatCard label="Con cantidad baja (≤2)" value={bajoStock} accent />
       </div>
 
       <div style={styles.toolbar}>
@@ -212,10 +220,13 @@ function InventarioTab({ productos, stockMap, onAdd, onDelete }) {
                 {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </Field>
+            <Field label="Cantidad">
+              <input type="number" min="0" style={styles.input} value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} />
+            </Field>
             <Field label="Costo (compra) c/u">
               <input type="number" min="0" style={styles.input} value={form.costo} onChange={(e) => setForm({ ...form, costo: e.target.value })} />
             </Field>
-            <Field label="Precio de venta c/u">
+            <Field label="Precio venta cada uno">
               <input type="number" min="0" style={styles.input} value={form.precioVenta} onChange={(e) => setForm({ ...form, precioVenta: e.target.value })} />
             </Field>
           </div>
@@ -231,7 +242,7 @@ function InventarioTab({ productos, stockMap, onAdd, onDelete }) {
           <thead>
             <tr>
               <th style={styles.th}>Producto</th><th style={styles.th}>SKU</th><th style={styles.th}>Categoría</th>
-              <th style={styles.th}>Costo</th><th style={styles.th}>Precio venta</th><th style={styles.th}>Stock</th><th style={styles.th}></th>
+              <th style={styles.th}>Cantidad</th><th style={styles.th}>Costo</th><th style={styles.th}>Precio venta cada uno</th><th style={styles.th}></th>
             </tr>
           </thead>
           <tbody>
@@ -239,16 +250,18 @@ function InventarioTab({ productos, stockMap, onAdd, onDelete }) {
               <tr><td colSpan={7} style={styles.emptyCell}>Aún no hay productos que coincidan. Agrega el primero arriba.</td></tr>
             )}
             {filtered.map((p) => {
-              const stock = stockMap[p.id] || 0;
+              const cantidad = Number(p.cantidad) || 0;
               return (
                 <tr key={p.id}>
                   <td style={styles.td}><strong>{p.nombre}</strong></td>
                   <td style={styles.tdMuted}>{p.sku || "—"}</td>
                   <td style={styles.tdMuted}><span style={styles.pill}>{p.categoria}</span></td>
-                  <td style={styles.td}>{fmt(p.costo)}</td>
-                  <td style={styles.td}>{fmt(p.precio_venta)}</td>
                   <td style={styles.td}>
-                    <span style={{ ...styles.stockPill, ...(stock <= 2 ? styles.stockLow : stock <= 0 ? styles.stockOut : {}) }}>{stock}</span>
+                    <CantidadInput value={p.cantidad} onSave={(nueva) => onUpdateCantidad(p.id, nueva)} low={cantidad <= 2} />
+                  </td>
+                  <td style={styles.td}>{fmt(p.costo)}</td>
+                  <td style={styles.td}>
+                    <PrecioVentaInput value={p.precio_venta} onSave={(nuevo) => onUpdatePrecioVenta(p.id, nuevo)} />
                   </td>
                   <td style={styles.td}>
                     <button style={styles.iconBtn} onClick={() => onDelete(p.id)} title="Eliminar producto"><Trash2 size={15} /></button>
@@ -378,7 +391,7 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onAddProducto }) {
 }
 
 /* ---------------- VENTAS ---------------- */
-function VentasTab({ productos, ventas, stockMap, onAdd, onDelete }) {
+function VentasTab({ productos, ventas, onAdd, onDelete }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ productoId: "", cantidad: "1", precioVenta: "", cliente: "", fechaEntrega: today(), abono: "", metodoPago: "Efectivo" });
 
@@ -409,7 +422,7 @@ function VentasTab({ productos, ventas, stockMap, onAdd, onDelete }) {
 
   const productoNombre = (id) => productos.find((p) => p.id === id)?.nombre || "(producto eliminado)";
   const sorted = [...ventas];
-  const stockDisponible = selectedProducto ? stockMap[selectedProducto.id] || 0 : null;
+  const cantidadDisponible = selectedProducto ? Number(selectedProducto.cantidad) || 0 : null;
 
   return (
     <div>
@@ -431,9 +444,9 @@ function VentasTab({ productos, ventas, stockMap, onAdd, onDelete }) {
             <Field label="Producto *" wide>
               <select style={styles.input} value={form.productoId} onChange={(e) => onSelectProducto(e.target.value)} required>
                 <option value="">Selecciona un producto…</option>
-                {productos.map((p) => <option key={p.id} value={p.id}>{p.nombre} — stock: {stockMap[p.id] || 0}</option>)}
+                {productos.map((p) => <option key={p.id} value={p.id}>{p.nombre} — cantidad: {Number(p.cantidad) || 0}</option>)}
               </select>
-              {selectedProducto && stockDisponible <= 0 && <span style={styles.warnText}>Este producto no tiene stock registrado.</span>}
+              {selectedProducto && cantidadDisponible <= 0 && <span style={styles.warnText}>Este producto no tiene cantidad registrada.</span>}
             </Field>
             <Field label="Cantidad *">
               <input type="number" min="1" style={styles.input} value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} required />
@@ -502,6 +515,61 @@ function StatCard({ label, value, accent }) {
     </div>
   );
 }
+function PrecioVentaInput({ value, onSave }) {
+  const [draft, setDraft] = useState(String(value ?? 0));
+
+  useEffect(() => {
+    setDraft(String(value ?? 0));
+  }, [value]);
+
+  function commit() {
+    const nuevo = Number(draft) || 0;
+    if (nuevo !== Number(value)) onSave(nuevo);
+    else setDraft(String(value ?? 0));
+  }
+
+  return (
+    <input
+      type="number"
+      min="0"
+      style={styles.priceInput}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+    />
+  );
+}
+function CantidadInput({ value, onSave, low }) {
+  const [draft, setDraft] = useState(String(value ?? 0));
+
+  useEffect(() => {
+    setDraft(String(value ?? 0));
+  }, [value]);
+
+  function commit() {
+    const nueva = Number(draft) || 0;
+    if (nueva !== Number(value)) onSave(nueva);
+    else setDraft(String(value ?? 0));
+  }
+
+  return (
+    <input
+      type="number"
+      min="0"
+      step="1"
+      style={{ ...styles.priceInput, width: 80, ...(low ? styles.priceInputLow : {}) }}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+    />
+  );
+}
 function Field({ label, children, wide }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, gridColumn: wide ? "1 / -1" : "auto" }}>
@@ -542,6 +610,8 @@ const styles = {
   formActions: { display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 },
   label: { fontSize: 12, color: "#8B6B76", fontWeight: 500 },
   input: { border: "1px solid #EEDEE0", borderRadius: 8, padding: "9px 10px", fontSize: 13.5, fontFamily: "'Poppins', sans-serif", background: "#fff", color: "#3B2A33", outline: "none", width: "100%", boxSizing: "border-box" },
+  priceInput: { border: "1px solid #EEDEE0", borderRadius: 8, padding: "6px 8px", fontSize: 13, fontFamily: "'Poppins', sans-serif", background: "#fff", color: "#3B2A33", outline: "none", width: 110, boxSizing: "border-box" },
+  priceInputLow: { borderColor: "#E7CFA0", background: "#FCF1DC", color: "#A9791F" },
   inlineRow: { display: "flex", gap: 8, alignItems: "center" },
   warnText: { fontSize: 11.5, color: "#B4453F", marginTop: 4 },
   hintText: { fontSize: 12.5, color: "#8B6B76", marginTop: -8, marginBottom: 16 },
@@ -554,6 +624,5 @@ const styles = {
   pill: { background: "#F1E3E8", color: "#B84C71", padding: "3px 9px", borderRadius: 20, fontSize: 11, fontWeight: 500 },
   stockPill: { background: "#EAF6F4", color: "#3F8F87", padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600 },
   stockLow: { background: "#FCF1DC", color: "#A9791F" },
-  stockOut: { background: "#FDECEC", color: "#B4453F" },
   iconBtn: { background: "transparent", border: "none", color: "#B89099", cursor: "pointer", padding: 6, borderRadius: 6 },
 };

@@ -7,10 +7,14 @@ create table if not exists productos (
   nombre text not null,
   sku text,
   categoria text,
+  cantidad numeric default 0,
   precio_venta numeric default 0,
   costo numeric default 0,
   created_at timestamptz default now()
 );
+
+-- Si la tabla productos ya existía antes de agregar la cantidad manual, ejecuta esta línea:
+alter table productos add column if not exists cantidad numeric default 0;
 
 create table if not exists compras (
   id uuid primary key default gen_random_uuid(),
