@@ -89,7 +89,7 @@ export default function InventarioApp() {
   }
   async function addCompra(c) {
     const { error } = await supabase.from("compras").insert({
-      producto_id: c.productoId, cantidad: c.cantidad, valor_unitario: c.valorUnitario,
+      producto_id: c.productoId, nombre_producto: c.nombreProducto, cantidad: c.cantidad, valor_unitario: c.valorUnitario,
       valor_total: c.valorTotal, fecha: c.fecha, quien_pago: c.quienPago, factura: c.factura,
     });
     if (error) setError("No se pudo guardar la compra.");
@@ -176,7 +176,7 @@ export default function InventarioApp() {
           <InventarioTab productos={productos} onAdd={addProducto} onDelete={deleteProducto} onUpdatePrecioVenta={updatePrecioVenta} onUpdateCantidad={updateCantidad} />
         )}
         {tab === "compras" && (
-          <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onAddProducto={addProducto} />
+          <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} />
         )}
         {tab === "ventas" && (
           <VentasTab ventas={ventas} onAdd={addVenta} onDelete={deleteVenta} onUpdateFechaPago={updateFechaPago} onUpdateFechaEntrega={updateFechaEntrega} onUpdateAbono={updateAbono} />
@@ -304,24 +304,22 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
 }
 
 /* ---------------- COMPRAS ---------------- */
-function ComprasTab({ productos, compras, onAdd, onDelete, onAddProducto }) {
+function ComprasTab({ productos, compras, onAdd, onDelete }) {
   const [showForm, setShowForm] = useState(false);
   const [creatingNew, setCreatingNew] = useState(false);
   const [form, setForm] = useState({ productoId: "", nuevoNombre: "", cantidad: "1", valorUnitario: "", fecha: today(), quienPago: "", factura: "" });
 
   const totalCompras = compras.reduce((s, c) => s + Number(c.valor_total || 0), 0);
 
-  async function submit(e) {
+  function submit(e) {
     e.preventDefault();
-    if (creatingNew) {
-      if (!form.nuevoNombre.trim()) return;
-      await onAddProducto({ nombre: form.nuevoNombre.trim(), sku: "", categoria: "OTRO", precioVenta: 0, costo: Number(form.valorUnitario) || 0 });
-    }
+    if (creatingNew && !form.nuevoNombre.trim()) return;
+    if (!creatingNew && !form.productoId) return;
     const cantidad = Number(form.cantidad) || 0;
     const valorUnitario = Number(form.valorUnitario) || 0;
-    if (!creatingNew && !form.productoId) return;
     onAdd({
       productoId: creatingNew ? null : form.productoId,
+      nombreProducto: creatingNew ? form.nuevoNombre.trim() : null,
       cantidad, valorUnitario, valorTotal: cantidad * valorUnitario,
       fecha: form.fecha, quienPago: form.quienPago.trim(), factura: form.factura.trim(),
     });
@@ -330,8 +328,24 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onAddProducto }) {
     setShowForm(false);
   }
 
-  const productoNombre = (id) => productos.find((p) => p.id === id)?.nombre || "(producto eliminado)";
+  const productoNombre = (c) =>
+    c.nombre_producto || productos.find((p) => p.id === c.producto_id)?.nombre || "(producto eliminado)";
   const sorted = [...compras];
+
+  const facturasMap = new Map();
+  for (const c of compras) {
+    const key = (c.factura || "").trim() || "__sin_factura__";
+    if (!facturasMap.has(key)) {
+      facturasMap.set(key, { factura: (c.factura || "").trim() || "Sin factura", fechaMin: c.fecha, fechaMax: c.fecha, unidades: 0, total: 0, lineas: 0 });
+    }
+    const entry = facturasMap.get(key);
+    entry.unidades += Number(c.cantidad || 0);
+    entry.total += Number(c.valor_total || 0);
+    entry.lineas += 1;
+    if (c.fecha && (!entry.fechaMin || c.fecha < entry.fechaMin)) entry.fechaMin = c.fecha;
+    if (c.fecha && (!entry.fechaMax || c.fecha > entry.fechaMax)) entry.fechaMax = c.fecha;
+  }
+  const resumenFacturas = Array.from(facturasMap.values()).sort((a, b) => (b.fechaMax || "").localeCompare(a.fechaMax || ""));
 
   return (
     <div>
@@ -352,15 +366,15 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onAddProducto }) {
               {!creatingNew ? (
                 <div style={styles.inlineRow}>
                   <select style={styles.input} value={form.productoId} onChange={(e) => setForm({ ...form, productoId: e.target.value })} required>
-                    <option value="">Selecciona un producto…</option>
+                    <option value="">Selecciona un producto del inventario…</option>
                     {productos.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
                   </select>
-                  <button type="button" style={styles.linkBtn} onClick={() => setCreatingNew(true)}>+ nuevo</button>
+                  <button type="button" style={styles.linkBtn} onClick={() => setCreatingNew(true)}>+ escribir nombre</button>
                 </div>
               ) : (
                 <div style={styles.inlineRow}>
-                  <input style={styles.input} placeholder="Nombre del producto nuevo" value={form.nuevoNombre} onChange={(e) => setForm({ ...form, nuevoNombre: e.target.value })} required />
-                  <button type="button" style={styles.linkBtn} onClick={() => setCreatingNew(false)}>usar existente</button>
+                  <input style={styles.input} placeholder="Nombre del producto (no se agrega al inventario)" value={form.nuevoNombre} onChange={(e) => setForm({ ...form, nuevoNombre: e.target.value })} required />
+                  <button type="button" style={styles.linkBtn} onClick={() => setCreatingNew(false)}>usar del inventario</button>
                 </div>
               )}
             </Field>
@@ -387,6 +401,30 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onAddProducto }) {
         </form>
       )}
 
+      <h3 style={styles.sectionTitle}>Resumen por factura</h3>
+      <div style={{ ...styles.tableWrap, marginBottom: 20 }}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Factura</th><th style={styles.th}>Fecha</th>
+              <th style={styles.th}>Unidades</th><th style={styles.th}>Total comprado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {resumenFacturas.length === 0 && <tr><td colSpan={4} style={styles.emptyCell}>Aún no has registrado compras.</td></tr>}
+            {resumenFacturas.map((f) => (
+              <tr key={f.factura}>
+                <td style={styles.td}><strong>{f.factura}</strong></td>
+                <td style={styles.tdMuted}>{f.fechaMin === f.fechaMax ? fmtDate(f.fechaMin) : `${fmtDate(f.fechaMin)} – ${fmtDate(f.fechaMax)}`}</td>
+                <td style={styles.td}>{f.unidades}</td>
+                <td style={styles.td}>{fmt(f.total)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style={styles.sectionTitle}>Detalle de compras</h3>
       <div style={styles.tableWrap}>
         <table style={styles.table}>
           <thead>
@@ -401,7 +439,7 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onAddProducto }) {
             {sorted.map((c) => (
               <tr key={c.id}>
                 <td style={styles.tdMuted}>{fmtDate(c.fecha)}</td>
-                <td style={styles.td}><strong>{productoNombre(c.producto_id)}</strong></td>
+                <td style={styles.td}><strong>{productoNombre(c)}</strong></td>
                 <td style={styles.td}>{c.cantidad}</td>
                 <td style={styles.td}>{fmt(c.valor_unitario)}</td>
                 <td style={styles.td}>{fmt(c.valor_total)}</td>
@@ -688,6 +726,7 @@ const styles = {
   main: { padding: "22px 28px", background: "#FFFFFF", margin: "0 20px", borderRadius: "0 12px 12px 12px", boxShadow: "0 1px 3px rgba(59,42,51,0.06)" },
   errorBanner: { display: "flex", alignItems: "center", gap: 8, margin: "12px 28px 0", padding: "10px 14px", background: "#FDECEC", color: "#B4453F", borderRadius: 8, fontSize: 13 },
   statRow: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 20 },
+  sectionTitle: { fontFamily: "'Playfair Display', serif", fontSize: 16, fontWeight: 600, color: "#B84C71", margin: "0 0 10px" },
   statCard: { background: "#FBF3F1", border: "1px solid #EEDEE0", borderRadius: 12, padding: "14px 16px" },
   statCardAccent: { background: "linear-gradient(135deg, #FCEFE0, #FBF3F1)", borderColor: "#E7CFA0" },
   statLabel: { margin: 0, fontSize: 11.5, color: "#8B6B76", textTransform: "uppercase", letterSpacing: 0.4 },
