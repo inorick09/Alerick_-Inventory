@@ -827,7 +827,19 @@ function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
   }
 
   const sorted = [...items];
-  const resumenFaltantes = items.filter((pc) => pc.status === "Agotado" || pc.status === "Por comprar");
+
+  const resumenMap = new Map();
+  for (const pc of items) {
+    if (pc.status !== "Agotado" && pc.status !== "Por comprar") continue;
+    const key = `${pc.producto}|||${pc.sku || ""}`;
+    if (!resumenMap.has(key)) resumenMap.set(key, { producto: pc.producto, sku: pc.sku, tonos: new Map() });
+    const grupo = resumenMap.get(key);
+    const tonoKey = (pc.tono || "").trim() || "—";
+    grupo.tonos.set(tonoKey, (grupo.tonos.get(tonoKey) || 0) + (Number(pc.cantidad) || 0));
+  }
+  const resumenAgrupado = Array.from(resumenMap.values())
+    .map((g) => ({ ...g, tonos: Array.from(g.tonos.entries()) }))
+    .sort((a, b) => a.producto.localeCompare(b.producto));
 
   return (
     <div>
@@ -844,15 +856,21 @@ function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
             </tr>
           </thead>
           <tbody>
-            {resumenFaltantes.length === 0 && <tr><td colSpan={4} style={styles.emptyCell}>No hay productos agotados ni por comprar.</td></tr>}
-            {resumenFaltantes.map((pc) => (
-              <tr key={pc.id}>
-                <td style={styles.td}><strong>{pc.producto}</strong></td>
-                <td style={styles.tdMuted}>{pc.sku || "—"}</td>
-                <td style={styles.tdMuted}>{pc.tono || "—"}</td>
-                <td style={styles.td}>{pc.cantidad}</td>
-              </tr>
-            ))}
+            {resumenAgrupado.length === 0 && <tr><td colSpan={4} style={styles.emptyCell}>No hay productos agotados ni por comprar.</td></tr>}
+            {resumenAgrupado.map((g) =>
+              g.tonos.map(([tono, cantidad], i) => (
+                <tr key={`${g.producto}|||${g.sku}|||${tono}`}>
+                  {i === 0 && (
+                    <>
+                      <td style={styles.td} rowSpan={g.tonos.length}><strong>{g.producto}</strong></td>
+                      <td style={styles.tdMuted} rowSpan={g.tonos.length}>{g.sku || "—"}</td>
+                    </>
+                  )}
+                  <td style={styles.tdMuted}>{tono}</td>
+                  <td style={styles.td}>{cantidad}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
