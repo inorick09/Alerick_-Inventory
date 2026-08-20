@@ -20,6 +20,7 @@ create table if not exists compras (
   id uuid primary key default gen_random_uuid(),
   producto_id uuid references productos(id) on delete set null,
   nombre_producto text,
+  sku text,
   cantidad numeric not null default 0,
   valor_unitario numeric not null default 0,
   valor_total numeric not null default 0,
@@ -29,8 +30,9 @@ create table if not exists compras (
   created_at timestamptz default now()
 );
 
--- Si la tabla compras ya existía antes de agregar nombre_producto, ejecuta esta línea:
+-- Si la tabla compras ya existía antes de agregar nombre_producto y sku, ejecuta estas líneas:
 alter table compras add column if not exists nombre_producto text;
+alter table compras add column if not exists sku text;
 
 create table if not exists ventas (
   id uuid primary key default gen_random_uuid(),

@@ -89,7 +89,7 @@ export default function InventarioApp() {
   }
   async function addCompra(c) {
     const { error } = await supabase.from("compras").insert({
-      producto_id: c.productoId, nombre_producto: c.nombreProducto, cantidad: c.cantidad, valor_unitario: c.valorUnitario,
+      producto_id: c.productoId, nombre_producto: c.nombreProducto, sku: c.sku, cantidad: c.cantidad, valor_unitario: c.valorUnitario,
       valor_total: c.valorTotal, fecha: c.fecha, quien_pago: c.quienPago, factura: c.factura,
     });
     if (error) setError("No se pudo guardar la compra.");
@@ -306,7 +306,7 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
 /* ---------------- COMPRAS ---------------- */
 function ComprasTab({ productos, compras, onAdd, onDelete }) {
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ nombreProducto: "", cantidad: "1", valorUnitario: "", fecha: today(), quienPago: "", factura: "" });
+  const [form, setForm] = useState({ nombreProducto: "", sku: "", cantidad: "1", valorUnitario: "", fecha: today(), quienPago: "", factura: "" });
 
   const totalCompras = compras.reduce((s, c) => s + Number(c.valor_total || 0), 0);
 
@@ -318,10 +318,11 @@ function ComprasTab({ productos, compras, onAdd, onDelete }) {
     onAdd({
       productoId: null,
       nombreProducto: form.nombreProducto.trim(),
+      sku: form.sku.trim(),
       cantidad, valorUnitario, valorTotal: cantidad * valorUnitario,
       fecha: form.fecha, quienPago: form.quienPago.trim(), factura: form.factura.trim(),
     });
-    setForm({ nombreProducto: "", cantidad: "1", valorUnitario: "", fecha: today(), quienPago: "", factura: "" });
+    setForm({ nombreProducto: "", sku: "", cantidad: "1", valorUnitario: "", fecha: today(), quienPago: "", factura: "" });
     setShowForm(false);
   }
 
@@ -361,6 +362,9 @@ function ComprasTab({ productos, compras, onAdd, onDelete }) {
           <div style={styles.formGrid}>
             <Field label="Producto *" wide>
               <input style={styles.input} placeholder="Nombre del producto" value={form.nombreProducto} onChange={(e) => setForm({ ...form, nombreProducto: e.target.value })} required />
+            </Field>
+            <Field label="SKU / Referencia">
+              <input style={styles.input} value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} />
             </Field>
             <Field label="Cantidad *">
               <input type="number" min="1" style={styles.input} value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} required />
@@ -413,17 +417,18 @@ function ComprasTab({ productos, compras, onAdd, onDelete }) {
         <table style={styles.table}>
           <thead>
             <tr>
-              <th style={styles.th}>Fecha</th><th style={styles.th}>Producto</th><th style={styles.th}>Cant.</th>
+              <th style={styles.th}>Fecha</th><th style={styles.th}>Producto</th><th style={styles.th}>SKU</th><th style={styles.th}>Cant.</th>
               <th style={styles.th}>Valor unit.</th><th style={styles.th}>Total</th><th style={styles.th}>Quién pagó</th>
               <th style={styles.th}>Factura</th><th style={styles.th}></th>
             </tr>
           </thead>
           <tbody>
-            {sorted.length === 0 && <tr><td colSpan={8} style={styles.emptyCell}>Aún no has registrado compras.</td></tr>}
+            {sorted.length === 0 && <tr><td colSpan={9} style={styles.emptyCell}>Aún no has registrado compras.</td></tr>}
             {sorted.map((c) => (
               <tr key={c.id}>
                 <td style={styles.tdMuted}>{fmtDate(c.fecha)}</td>
                 <td style={styles.td}><strong>{productoNombre(c)}</strong></td>
+                <td style={styles.tdMuted}>{c.sku || "—"}</td>
                 <td style={styles.td}>{c.cantidad}</td>
                 <td style={styles.td}>{fmt(c.valor_unitario)}</td>
                 <td style={styles.td}>{fmt(c.valor_total)}</td>
