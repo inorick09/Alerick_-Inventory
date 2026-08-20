@@ -54,10 +54,20 @@ create table if not exists ventas (
 alter table ventas add column if not exists nombre_producto text;
 alter table ventas add column if not exists fecha_pago date;
 
+create table if not exists pagos_pendientes (
+  id uuid primary key default gen_random_uuid(),
+  nombre text not null,
+  monto numeric not null default 0,
+  factura text,
+  fecha date not null default current_date,
+  created_at timestamptz default now()
+);
+
 -- Habilita el acceso en tiempo real (para que ambos vean los cambios del otro al instante)
 alter publication supabase_realtime add table productos;
 alter publication supabase_realtime add table compras;
 alter publication supabase_realtime add table ventas;
+alter publication supabase_realtime add table pagos_pendientes;
 
 -- Seguridad a nivel de fila (RLS): la app usa la llave "anon" pública, así que
 -- se habilita RLS pero se permite lectura/escritura a cualquiera que tenga el enlace de la app.
@@ -67,7 +77,9 @@ alter publication supabase_realtime add table ventas;
 alter table productos enable row level security;
 alter table compras enable row level security;
 alter table ventas enable row level security;
+alter table pagos_pendientes enable row level security;
 
 create policy "acceso total productos" on productos for all using (true) with check (true);
 create policy "acceso total compras" on compras for all using (true) with check (true);
 create policy "acceso total ventas" on ventas for all using (true) with check (true);
+create policy "acceso total pagos_pendientes" on pagos_pendientes for all using (true) with check (true);

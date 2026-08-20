@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle, SlidersHorizontal } from "lucide-react";
+import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle, SlidersHorizontal, Wallet } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const fmt = (n) =>
@@ -28,16 +28,18 @@ export default function InventarioApp() {
   const [productos, setProductos] = useState([]);
   const [compras, setCompras] = useState([]);
   const [ventas, setVentas] = useState([]);
+  const [pagosPendientes, setPagosPendientes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const fetchAll = useCallback(async () => {
-    const [p, c, v] = await Promise.all([
+    const [p, c, v, pp] = await Promise.all([
       supabase.from("productos").select("*").order("nombre"),
       supabase.from("compras").select("*").order("fecha", { ascending: false }),
       supabase.from("ventas").select("*").order("fecha_entrega", { ascending: false }),
+      supabase.from("pagos_pendientes").select("*").order("fecha", { ascending: false }),
     ]);
-    if (p.error || c.error || v.error) {
+    if (p.error || c.error || v.error || pp.error) {
       setError("No se pudo conectar con la base de datos. Revisa la configuración de Supabase.");
       return;
     }
@@ -45,6 +47,7 @@ export default function InventarioApp() {
     setProductos(p.data || []);
     setCompras(c.data || []);
     setVentas(v.data || []);
+    setPagosPendientes(pp.data || []);
   }, []);
 
   useEffect(() => {
@@ -55,6 +58,7 @@ export default function InventarioApp() {
       .on("postgres_changes", { event: "*", schema: "public", table: "productos" }, fetchAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "compras" }, fetchAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "ventas" }, fetchAll)
+      .on("postgres_changes", { event: "*", schema: "public", table: "pagos_pendientes" }, fetchAll)
       .subscribe();
 
     return () => {
@@ -148,6 +152,17 @@ export default function InventarioApp() {
       fetchAll();
     }
   }
+  async function addPagoPendiente(pp) {
+    const { error } = await supabase.from("pagos_pendientes").insert({
+      nombre: pp.nombre, monto: pp.monto, factura: pp.factura, fecha: pp.fecha,
+    });
+    if (error) setError("No se pudo guardar el pago pendiente.");
+    else fetchAll();
+  }
+  async function deletePagoPendiente(id) {
+    const { error } = await supabase.from("pagos_pendientes").delete().eq("id", id);
+    if (error) setError("No se pudo eliminar el pago pendiente.");
+  }
 
   if (loading) {
     return (
@@ -175,6 +190,7 @@ export default function InventarioApp() {
         <TabButton icon={Package} label="Inventario" active={tab === "inventario"} onClick={() => setTab("inventario")} />
         <TabButton icon={ShoppingCart} label="Compras" active={tab === "compras"} onClick={() => setTab("compras")} />
         <TabButton icon={TrendingUp} label="Ventas" active={tab === "ventas"} onClick={() => setTab("ventas")} />
+        <TabButton icon={Wallet} label="Balance" active={tab === "balance"} onClick={() => setTab("balance")} />
       </nav>
 
       {error && (
@@ -190,6 +206,9 @@ export default function InventarioApp() {
         )}
         {tab === "ventas" && (
           <VentasTab ventas={ventas} onAdd={addVenta} onDelete={deleteVenta} onUpdateFechaPago={updateFechaPago} onUpdateFechaEntrega={updateFechaEntrega} onUpdateAbono={updateAbono} />
+        )}
+        {tab === "balance" && (
+          <BalanceTab ventas={ventas} compras={compras} pagosPendientes={pagosPendientes} onAdd={addPagoPendiente} onDelete={deletePagoPendiente} />
         )}
       </main>
     </div>
@@ -651,6 +670,94 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
                 <td style={styles.td}><span style={{ ...styles.stockPill, ...(v.saldo > 0 ? styles.stockLow : {}) }}>{fmt(v.saldo)}</span></td>
                 <td style={styles.tdMuted}>{v.metodo_pago}</td>
                 <td style={styles.td}><button style={styles.iconBtn} onClick={() => onDelete(v.id)} title="Eliminar venta"><Trash2 size={15} /></button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- BALANCE ---------------- */
+function BalanceTab({ ventas, compras, pagosPendientes, onAdd, onDelete }) {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ nombre: "", monto: "", factura: "", fecha: today() });
+
+  const totalVentas = ventas.reduce((s, v) => s + Number(v.valor_total || 0), 0);
+  const totalCompras = compras.reduce((s, c) => s + Number(c.valor_total || 0), 0);
+  const resultado = totalVentas - totalCompras;
+  const totalPendientes = pagosPendientes.reduce((s, pp) => s + Number(pp.monto || 0), 0);
+
+  function submit(e) {
+    e.preventDefault();
+    if (!form.nombre.trim() || !form.monto) return;
+    onAdd({ nombre: form.nombre.trim(), monto: Number(form.monto) || 0, factura: form.factura.trim(), fecha: form.fecha });
+    setForm({ nombre: "", monto: "", factura: "", fecha: today() });
+    setShowForm(false);
+  }
+
+  const sorted = [...pagosPendientes];
+
+  return (
+    <div>
+      <div style={styles.statRow}>
+        <StatCard label="Total de ventas" value={fmt(totalVentas)} />
+        <StatCard label="Total invertido (compras)" value={fmt(totalCompras)} />
+        <StatCard label="Resultado (ventas - compras)" value={fmt(resultado)} accent />
+      </div>
+
+      <h3 style={styles.sectionTitle}>Pagos pendientes</h3>
+      <div style={styles.statRow}>
+        <StatCard label="Personas con pagos pendientes" value={pagosPendientes.length} />
+        <StatCard label="Total pendiente por pagar" value={fmt(totalPendientes)} accent />
+      </div>
+
+      <div style={styles.toolbar}>
+        <div />
+        <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar pago pendiente</button>
+      </div>
+
+      {showForm && (
+        <form onSubmit={submit} style={styles.card}>
+          <div style={styles.formGrid}>
+            <Field label="Nombre de la persona *">
+              <input style={styles.input} value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} placeholder="¿A quién se le debe?" required />
+            </Field>
+            <Field label="Monto que se debe *">
+              <input type="number" min="0" style={styles.input} value={form.monto} onChange={(e) => setForm({ ...form, monto: e.target.value })} required />
+            </Field>
+            <Field label="N.º de factura">
+              <input style={styles.input} value={form.factura} onChange={(e) => setForm({ ...form, factura: e.target.value })} />
+            </Field>
+            <Field label="Fecha">
+              <input type="date" style={styles.input} value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} />
+            </Field>
+          </div>
+          <div style={styles.formActions}>
+            <button type="button" style={styles.ghostBtn} onClick={() => setShowForm(false)}>Cancelar</button>
+            <button type="submit" style={styles.primaryBtn}>Guardar pago pendiente</button>
+          </div>
+        </form>
+      )}
+
+      <div style={styles.tableWrap}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Nombre</th><th style={styles.th}>Monto</th>
+              <th style={styles.th}>Factura</th><th style={styles.th}>Fecha</th><th style={styles.th}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.length === 0 && <tr><td colSpan={5} style={styles.emptyCell}>No hay pagos pendientes registrados.</td></tr>}
+            {sorted.map((pp) => (
+              <tr key={pp.id}>
+                <td style={styles.td}><strong>{pp.nombre}</strong></td>
+                <td style={styles.td}>{fmt(pp.monto)}</td>
+                <td style={styles.tdMuted}>{pp.factura || "—"}</td>
+                <td style={styles.tdMuted}>{fmtDate(pp.fecha)}</td>
+                <td style={styles.td}><button style={styles.iconBtn} onClick={() => onDelete(pp.id)} title="Eliminar pago pendiente"><Trash2 size={15} /></button></td>
               </tr>
             ))}
           </tbody>
