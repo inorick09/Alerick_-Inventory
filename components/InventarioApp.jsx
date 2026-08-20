@@ -887,20 +887,20 @@ function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
             <Field label="Producto *" wide>
               <input style={styles.input} value={form.producto} onChange={(e) => setForm({ ...form, producto: e.target.value })} required />
             </Field>
-            <Field label="SKU">
-              <input style={styles.input} value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} />
+            <Field label="SKU *">
+              <input style={styles.input} value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} required />
             </Field>
-            <Field label="Tono">
-              <input style={styles.input} value={form.tono} onChange={(e) => setForm({ ...form, tono: e.target.value })} />
+            <Field label="Tono *">
+              <input style={styles.input} value={form.tono} onChange={(e) => setForm({ ...form, tono: e.target.value })} required />
             </Field>
-            <Field label="Cantidad">
-              <input type="number" min="0" style={styles.input} value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} />
+            <Field label="Cantidad *">
+              <input type="number" min="0" style={styles.input} value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} required />
             </Field>
-            <Field label="Cliente">
-              <input style={styles.input} value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })} />
+            <Field label="Cliente *">
+              <input style={styles.input} value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })} required />
             </Field>
-            <Field label="Status">
-              <select style={styles.input} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+            <Field label="Status *">
+              <select style={styles.input} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} required>
                 {STATUS_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             </Field>
