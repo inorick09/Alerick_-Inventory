@@ -827,6 +827,7 @@ function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
   }
 
   const sorted = [...items];
+  const resumenFaltantes = items.filter((pc) => pc.status === "Agotado" || pc.status === "Por comprar");
 
   return (
     <div>
@@ -834,6 +835,29 @@ function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
         <StatCard label="Productos por comprar" value={items.length} />
       </div>
 
+      <h3 style={styles.sectionTitle}>Resumen: agotado y por comprar</h3>
+      <div style={{ ...styles.tableWrap, marginBottom: 20 }}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Producto</th><th style={styles.th}>SKU</th><th style={styles.th}>Tono</th><th style={styles.th}>Cantidad</th>
+            </tr>
+          </thead>
+          <tbody>
+            {resumenFaltantes.length === 0 && <tr><td colSpan={4} style={styles.emptyCell}>No hay productos agotados ni por comprar.</td></tr>}
+            {resumenFaltantes.map((pc) => (
+              <tr key={pc.id}>
+                <td style={styles.td}><strong>{pc.producto}</strong></td>
+                <td style={styles.tdMuted}>{pc.sku || "—"}</td>
+                <td style={styles.tdMuted}>{pc.tono || "—"}</td>
+                <td style={styles.td}>{pc.cantidad}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style={styles.sectionTitle}>Detalle completo</h3>
       <div style={styles.toolbar}>
         <div />
         <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar producto</button>
