@@ -684,7 +684,7 @@ function BalanceTab({ ventas, compras, pagosPendientes, onAdd, onDelete }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ nombre: "", monto: "", factura: "", fecha: today() });
 
-  const totalVentas = ventas.reduce((s, v) => s + Number(v.valor_total || 0), 0);
+  const totalVentas = ventas.reduce((s, v) => s + Number(v.abono || 0), 0);
   const totalCompras = compras.reduce((s, c) => s + Number(c.valor_total || 0), 0);
   const resultado = totalVentas - totalCompras;
   const totalPendientes = pagosPendientes.reduce((s, pp) => s + Number(pp.monto || 0), 0);
