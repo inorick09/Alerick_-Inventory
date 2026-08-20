@@ -1,5 +1,5 @@
-import InventarioApp from "../components/InventarioApp";
+import LoginGate from "../components/LoginGate";
 
 export default function Home() {
-  return <InventarioApp />;
+  return <LoginGate />;
 }

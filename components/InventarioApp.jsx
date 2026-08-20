@@ -707,6 +707,12 @@ function BalanceTab({ ventas, compras, pagosPendientes, onAdd, onDelete }) {
         <StatCard label="Resultado (ventas - compras)" value={fmt(resultado)} accent />
       </div>
 
+      <h3 style={styles.sectionTitle}>Total ganancia cada uno</h3>
+      <div style={styles.statRow}>
+        <StatCard label="Erick" value={fmt(resultado / 2)} />
+        <StatCard label="Aleja" value={fmt(resultado / 2)} />
+      </div>
+
       <h3 style={styles.sectionTitle}>Pagos pendientes</h3>
       <div style={styles.statRow}>
         <StatCard label="Personas con pagos pendientes" value={pagosPendientes.length} />

@@ -69,17 +69,21 @@ alter publication supabase_realtime add table compras;
 alter publication supabase_realtime add table ventas;
 alter publication supabase_realtime add table pagos_pendientes;
 
--- Seguridad a nivel de fila (RLS): la app usa la llave "anon" pública, así que
--- se habilita RLS pero se permite lectura/escritura a cualquiera que tenga el enlace de la app.
--- Esto es apropiado para un equipo pequeño y confiable (tú y tu socio) sin sistema de login.
--- Si en el futuro quieres exigir inicio de sesión, se pueden ajustar estas políticas.
+-- Seguridad a nivel de fila (RLS): la app ahora exige inicio de sesión (Supabase Auth).
+-- Solo usuarios autenticados (con cuenta creada en Authentication > Users) pueden leer o
+-- escribir datos. La llave "anon" pública ya no basta por sí sola para acceder a los datos.
 
 alter table productos enable row level security;
 alter table compras enable row level security;
 alter table ventas enable row level security;
 alter table pagos_pendientes enable row level security;
 
-create policy "acceso total productos" on productos for all using (true) with check (true);
-create policy "acceso total compras" on compras for all using (true) with check (true);
-create policy "acceso total ventas" on ventas for all using (true) with check (true);
-create policy "acceso total pagos_pendientes" on pagos_pendientes for all using (true) with check (true);
+drop policy if exists "acceso total productos" on productos;
+drop policy if exists "acceso total compras" on compras;
+drop policy if exists "acceso total ventas" on ventas;
+drop policy if exists "acceso total pagos_pendientes" on pagos_pendientes;
+
+create policy "solo autenticados productos" on productos for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "solo autenticados compras" on compras for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "solo autenticados ventas" on ventas for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "solo autenticados pagos_pendientes" on pagos_pendientes for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
