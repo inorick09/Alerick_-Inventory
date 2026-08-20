@@ -306,30 +306,27 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
 /* ---------------- COMPRAS ---------------- */
 function ComprasTab({ productos, compras, onAdd, onDelete }) {
   const [showForm, setShowForm] = useState(false);
-  const [creatingNew, setCreatingNew] = useState(false);
-  const [form, setForm] = useState({ productoId: "", nuevoNombre: "", cantidad: "1", valorUnitario: "", fecha: today(), quienPago: "", factura: "" });
+  const [form, setForm] = useState({ nombreProducto: "", cantidad: "1", valorUnitario: "", fecha: today(), quienPago: "", factura: "" });
 
   const totalCompras = compras.reduce((s, c) => s + Number(c.valor_total || 0), 0);
 
   function submit(e) {
     e.preventDefault();
-    if (creatingNew && !form.nuevoNombre.trim()) return;
-    if (!creatingNew && !form.productoId) return;
+    if (!form.nombreProducto.trim()) return;
     const cantidad = Number(form.cantidad) || 0;
     const valorUnitario = Number(form.valorUnitario) || 0;
     onAdd({
-      productoId: creatingNew ? null : form.productoId,
-      nombreProducto: creatingNew ? form.nuevoNombre.trim() : null,
+      productoId: null,
+      nombreProducto: form.nombreProducto.trim(),
       cantidad, valorUnitario, valorTotal: cantidad * valorUnitario,
       fecha: form.fecha, quienPago: form.quienPago.trim(), factura: form.factura.trim(),
     });
-    setForm({ productoId: "", nuevoNombre: "", cantidad: "1", valorUnitario: "", fecha: today(), quienPago: "", factura: "" });
-    setCreatingNew(false);
+    setForm({ nombreProducto: "", cantidad: "1", valorUnitario: "", fecha: today(), quienPago: "", factura: "" });
     setShowForm(false);
   }
 
   const productoNombre = (c) =>
-    c.nombre_producto || productos.find((p) => p.id === c.producto_id)?.nombre || "(producto eliminado)";
+    c.nombre_producto || productos.find((p) => p.id === c.producto_id)?.nombre || "(sin nombre)";
   const sorted = [...compras];
 
   const facturasMap = new Map();
@@ -363,20 +360,7 @@ function ComprasTab({ productos, compras, onAdd, onDelete }) {
         <form onSubmit={submit} style={styles.card}>
           <div style={styles.formGrid}>
             <Field label="Producto *" wide>
-              {!creatingNew ? (
-                <div style={styles.inlineRow}>
-                  <select style={styles.input} value={form.productoId} onChange={(e) => setForm({ ...form, productoId: e.target.value })} required>
-                    <option value="">Selecciona un producto del inventario…</option>
-                    {productos.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                  </select>
-                  <button type="button" style={styles.linkBtn} onClick={() => setCreatingNew(true)}>+ escribir nombre</button>
-                </div>
-              ) : (
-                <div style={styles.inlineRow}>
-                  <input style={styles.input} placeholder="Nombre del producto (no se agrega al inventario)" value={form.nuevoNombre} onChange={(e) => setForm({ ...form, nuevoNombre: e.target.value })} required />
-                  <button type="button" style={styles.linkBtn} onClick={() => setCreatingNew(false)}>usar del inventario</button>
-                </div>
-              )}
+              <input style={styles.input} placeholder="Nombre del producto" value={form.nombreProducto} onChange={(e) => setForm({ ...form, nombreProducto: e.target.value })} required />
             </Field>
             <Field label="Cantidad *">
               <input type="number" min="1" style={styles.input} value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} required />
