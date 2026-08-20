@@ -63,11 +63,23 @@ create table if not exists pagos_pendientes (
   created_at timestamptz default now()
 );
 
+create table if not exists por_comprar (
+  id uuid primary key default gen_random_uuid(),
+  producto text not null,
+  sku text,
+  tono text,
+  cantidad numeric default 0,
+  cliente text,
+  status text not null default 'Por comprar',
+  created_at timestamptz default now()
+);
+
 -- Habilita el acceso en tiempo real (para que ambos vean los cambios del otro al instante)
 alter publication supabase_realtime add table productos;
 alter publication supabase_realtime add table compras;
 alter publication supabase_realtime add table ventas;
 alter publication supabase_realtime add table pagos_pendientes;
+alter publication supabase_realtime add table por_comprar;
 
 -- Seguridad a nivel de fila (RLS): la app ahora exige inicio de sesión (Supabase Auth).
 -- Solo usuarios autenticados (con cuenta creada en Authentication > Users) pueden leer o
@@ -77,6 +89,7 @@ alter table productos enable row level security;
 alter table compras enable row level security;
 alter table ventas enable row level security;
 alter table pagos_pendientes enable row level security;
+alter table por_comprar enable row level security;
 
 drop policy if exists "acceso total productos" on productos;
 drop policy if exists "acceso total compras" on compras;
@@ -87,3 +100,4 @@ create policy "solo autenticados productos" on productos for all using (auth.rol
 create policy "solo autenticados compras" on compras for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 create policy "solo autenticados ventas" on ventas for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 create policy "solo autenticados pagos_pendientes" on pagos_pendientes for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "solo autenticados por_comprar" on por_comprar for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');

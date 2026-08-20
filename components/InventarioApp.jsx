@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle, SlidersHorizontal, Wallet } from "lucide-react";
+import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle, SlidersHorizontal, Wallet, ClipboardList } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const fmt = (n) =>
@@ -23,23 +23,27 @@ const CATEGORIAS = [
 
 const QUIEN_PAGO_OPCIONES = ["Erick", "Aleja", "Nequi"];
 
+const STATUS_OPCIONES = ["Agotado", "Inventario Erik", "Inventario Aleja", "Por comprar", "Comprado"];
+
 export default function InventarioApp() {
   const [tab, setTab] = useState("inventario");
   const [productos, setProductos] = useState([]);
   const [compras, setCompras] = useState([]);
   const [ventas, setVentas] = useState([]);
   const [pagosPendientes, setPagosPendientes] = useState([]);
+  const [porComprar, setPorComprar] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const fetchAll = useCallback(async () => {
-    const [p, c, v, pp] = await Promise.all([
+    const [p, c, v, pp, pc] = await Promise.all([
       supabase.from("productos").select("*").order("nombre"),
       supabase.from("compras").select("*").order("fecha", { ascending: false }),
       supabase.from("ventas").select("*").order("fecha_entrega", { ascending: false }),
       supabase.from("pagos_pendientes").select("*").order("fecha", { ascending: false }),
+      supabase.from("por_comprar").select("*").order("created_at", { ascending: false }),
     ]);
-    if (p.error || c.error || v.error || pp.error) {
+    if (p.error || c.error || v.error || pp.error || pc.error) {
       setError("No se pudo conectar con la base de datos. Revisa la configuración de Supabase.");
       return;
     }
@@ -48,6 +52,7 @@ export default function InventarioApp() {
     setCompras(c.data || []);
     setVentas(v.data || []);
     setPagosPendientes(pp.data || []);
+    setPorComprar(pc.data || []);
   }, []);
 
   useEffect(() => {
@@ -59,6 +64,7 @@ export default function InventarioApp() {
       .on("postgres_changes", { event: "*", schema: "public", table: "compras" }, fetchAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "ventas" }, fetchAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "pagos_pendientes" }, fetchAll)
+      .on("postgres_changes", { event: "*", schema: "public", table: "por_comprar" }, fetchAll)
       .subscribe();
 
     return () => {
@@ -163,6 +169,25 @@ export default function InventarioApp() {
     const { error } = await supabase.from("pagos_pendientes").delete().eq("id", id);
     if (error) setError("No se pudo eliminar el pago pendiente.");
   }
+  async function addPorComprar(pc) {
+    const { error } = await supabase.from("por_comprar").insert({
+      producto: pc.producto, sku: pc.sku, tono: pc.tono, cantidad: pc.cantidad, cliente: pc.cliente, status: pc.status,
+    });
+    if (error) setError("No se pudo guardar el registro de por comprar.");
+    else fetchAll();
+  }
+  async function deletePorComprar(id) {
+    const { error } = await supabase.from("por_comprar").delete().eq("id", id);
+    if (error) setError("No se pudo eliminar el registro.");
+  }
+  async function updatePorComprar(id, patch) {
+    setPorComprar((prev) => prev.map((pc) => (pc.id === id ? { ...pc, ...patch } : pc)));
+    const { error } = await supabase.from("por_comprar").update(patch).eq("id", id);
+    if (error) {
+      setError("No se pudo actualizar el registro.");
+      fetchAll();
+    }
+  }
 
   if (loading) {
     return (
@@ -191,6 +216,7 @@ export default function InventarioApp() {
         <TabButton icon={ShoppingCart} label="Compras" active={tab === "compras"} onClick={() => setTab("compras")} />
         <TabButton icon={TrendingUp} label="Ventas" active={tab === "ventas"} onClick={() => setTab("ventas")} />
         <TabButton icon={Wallet} label="Balance" active={tab === "balance"} onClick={() => setTab("balance")} />
+        <TabButton icon={ClipboardList} label="Por comprar" active={tab === "porcomprar"} onClick={() => setTab("porcomprar")} />
       </nav>
 
       {error && (
@@ -209,6 +235,9 @@ export default function InventarioApp() {
         )}
         {tab === "balance" && (
           <BalanceTab ventas={ventas} compras={compras} pagosPendientes={pagosPendientes} onAdd={addPagoPendiente} onDelete={deletePagoPendiente} />
+        )}
+        {tab === "porcomprar" && (
+          <PorComprarTab items={porComprar} onAdd={addPorComprar} onDelete={deletePorComprar} onUpdate={updatePorComprar} />
         )}
       </main>
     </div>
@@ -268,22 +297,22 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
             <Field label="Nombre del producto *">
               <input style={styles.input} value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} placeholder="Ej: Brillo de labios Aura tono 01" required />
             </Field>
-            <Field label="SKU / Referencia">
-              <input style={styles.input} value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} />
+            <Field label="SKU / Referencia *">
+              <input style={styles.input} value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} required />
             </Field>
-            <Field label="Categoría">
-              <select style={styles.input} value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}>
+            <Field label="Categoría *">
+              <select style={styles.input} value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })} required>
                 {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </Field>
-            <Field label="Cantidad">
-              <input type="number" min="0" style={styles.input} value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} />
+            <Field label="Cantidad *">
+              <input type="number" min="0" style={styles.input} value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} required />
             </Field>
-            <Field label="Costo (compra) c/u">
-              <input type="number" min="0" style={styles.input} value={form.costo} onChange={(e) => setForm({ ...form, costo: e.target.value })} />
+            <Field label="Costo (compra) c/u *">
+              <input type="number" min="0" style={styles.input} value={form.costo} onChange={(e) => setForm({ ...form, costo: e.target.value })} required />
             </Field>
-            <Field label="Precio venta cada uno">
-              <input type="number" min="0" style={styles.input} value={form.precioVenta} onChange={(e) => setForm({ ...form, precioVenta: e.target.value })} />
+            <Field label="Precio venta cada uno *">
+              <input type="number" min="0" style={styles.input} value={form.precioVenta} onChange={(e) => setForm({ ...form, precioVenta: e.target.value })} required />
             </Field>
           </div>
           <div style={styles.formActions}>
@@ -404,8 +433,8 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate }) {
             <Field label="Producto *" wide>
               <input style={styles.input} placeholder="Nombre del producto" value={form.nombreProducto} onChange={(e) => setForm({ ...form, nombreProducto: e.target.value })} required />
             </Field>
-            <Field label="SKU / Referencia">
-              <input style={styles.input} value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} />
+            <Field label="SKU / Referencia *">
+              <input style={styles.input} value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} required />
             </Field>
             <Field label="Cantidad *">
               <input type="number" min="1" style={styles.input} value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} required />
@@ -413,17 +442,17 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate }) {
             <Field label="Valor unitario *">
               <input type="number" min="0" style={styles.input} value={form.valorUnitario} onChange={(e) => setForm({ ...form, valorUnitario: e.target.value })} required />
             </Field>
-            <Field label="Fecha de compra">
-              <input type="date" style={styles.input} value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} />
+            <Field label="Fecha de compra *">
+              <input type="date" style={styles.input} value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} required />
             </Field>
-            <Field label="Quién pagó">
-              <select style={styles.input} value={form.quienPago} onChange={(e) => setForm({ ...form, quienPago: e.target.value })}>
+            <Field label="Quién pagó *">
+              <select style={styles.input} value={form.quienPago} onChange={(e) => setForm({ ...form, quienPago: e.target.value })} required>
                 <option value="">Selecciona…</option>
                 {QUIEN_PAGO_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             </Field>
-            <Field label="N.º de factura">
-              <input style={styles.input} value={form.factura} onChange={(e) => setForm({ ...form, factura: e.target.value })} />
+            <Field label="N.º de factura *">
+              <input style={styles.input} value={form.factura} onChange={(e) => setForm({ ...form, factura: e.target.value })} required />
             </Field>
           </div>
           <div style={styles.formActions}>
@@ -556,7 +585,9 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
     return true;
   });
 
-  const sorted = [...filtered];
+  const sorted = filtrosActivos
+    ? filtered
+    : [...ventas].sort((a, b) => (b.fecha_pago || "").localeCompare(a.fecha_pago || "")).slice(0, 50);
 
   return (
     <div>
@@ -572,6 +603,12 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
         </button>
         <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar venta</button>
       </div>
+
+      {!filtrosActivos && ventas.length > 50 && (
+        <p style={{ fontSize: 12.5, color: "#8B6B76", margin: "-6px 0 14px" }}>
+          Mostrando las 50 ventas más recientes por fecha de pago. Usa los filtros para ver el resto.
+        </p>
+      )}
 
       {showFilters && (
         <div style={styles.card}>
@@ -610,20 +647,20 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
             <Field label="Precio de venta c/u *">
               <input type="number" min="0" style={styles.input} value={form.precioVenta} onChange={(e) => setForm({ ...form, precioVenta: e.target.value })} required />
             </Field>
-            <Field label="Cliente">
-              <input style={styles.input} value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })} />
+            <Field label="Cliente *">
+              <input style={styles.input} value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })} required />
             </Field>
-            <Field label="Fecha de entrega">
-              <input type="date" style={styles.input} value={form.fechaEntrega} onChange={(e) => setForm({ ...form, fechaEntrega: e.target.value })} />
+            <Field label="Fecha de entrega *">
+              <input type="date" style={styles.input} value={form.fechaEntrega} onChange={(e) => setForm({ ...form, fechaEntrega: e.target.value })} required />
             </Field>
-            <Field label="Fecha de pago">
-              <input type="date" style={styles.input} value={form.fechaPago} onChange={(e) => setForm({ ...form, fechaPago: e.target.value })} />
+            <Field label="Fecha de pago *">
+              <input type="date" style={styles.input} value={form.fechaPago} onChange={(e) => setForm({ ...form, fechaPago: e.target.value })} required />
             </Field>
-            <Field label="Abono recibido">
-              <input type="number" min="0" style={styles.input} value={form.abono} onChange={(e) => setForm({ ...form, abono: e.target.value })} />
+            <Field label="Abono recibido *">
+              <input type="number" min="0" style={styles.input} value={form.abono} onChange={(e) => setForm({ ...form, abono: e.target.value })} required />
             </Field>
-            <Field label="Método de pago">
-              <select style={styles.input} value={form.metodoPago} onChange={(e) => setForm({ ...form, metodoPago: e.target.value })}>
+            <Field label="Método de pago *">
+              <select style={styles.input} value={form.metodoPago} onChange={(e) => setForm({ ...form, metodoPago: e.target.value })} required>
                 <option>Efectivo</option><option>Nequi</option><option>Daviplata</option><option>Transferencia</option><option>Tarjeta</option>
               </select>
             </Field>
@@ -764,6 +801,108 @@ function BalanceTab({ ventas, compras, pagosPendientes, onAdd, onDelete }) {
                 <td style={styles.tdMuted}>{pp.factura || "—"}</td>
                 <td style={styles.tdMuted}>{fmtDate(pp.fecha)}</td>
                 <td style={styles.td}><button style={styles.iconBtn} onClick={() => onDelete(pp.id)} title="Eliminar pago pendiente"><Trash2 size={15} /></button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- POR COMPRAR ---------------- */
+function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ producto: "", sku: "", tono: "", cantidad: "1", cliente: "", status: STATUS_OPCIONES[3] });
+
+  function submit(e) {
+    e.preventDefault();
+    if (!form.producto.trim()) return;
+    onAdd({
+      producto: form.producto.trim(), sku: form.sku.trim(), tono: form.tono.trim(),
+      cantidad: Number(form.cantidad) || 0, cliente: form.cliente.trim(), status: form.status,
+    });
+    setForm({ producto: "", sku: "", tono: "", cantidad: "1", cliente: "", status: STATUS_OPCIONES[3] });
+    setShowForm(false);
+  }
+
+  const sorted = [...items];
+
+  return (
+    <div>
+      <div style={styles.statRow}>
+        <StatCard label="Productos por comprar" value={items.length} />
+      </div>
+
+      <div style={styles.toolbar}>
+        <div />
+        <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar producto</button>
+      </div>
+
+      {showForm && (
+        <form onSubmit={submit} style={styles.card}>
+          <div style={styles.formGrid}>
+            <Field label="Producto *" wide>
+              <input style={styles.input} value={form.producto} onChange={(e) => setForm({ ...form, producto: e.target.value })} required />
+            </Field>
+            <Field label="SKU">
+              <input style={styles.input} value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} />
+            </Field>
+            <Field label="Tono">
+              <input style={styles.input} value={form.tono} onChange={(e) => setForm({ ...form, tono: e.target.value })} />
+            </Field>
+            <Field label="Cantidad">
+              <input type="number" min="0" style={styles.input} value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} />
+            </Field>
+            <Field label="Cliente">
+              <input style={styles.input} value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })} />
+            </Field>
+            <Field label="Status">
+              <select style={styles.input} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+                {STATUS_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div style={styles.formActions}>
+            <button type="button" style={styles.ghostBtn} onClick={() => setShowForm(false)}>Cancelar</button>
+            <button type="submit" style={styles.primaryBtn}>Guardar</button>
+          </div>
+        </form>
+      )}
+
+      <div style={styles.tableWrap}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Producto</th><th style={styles.th}>SKU</th><th style={styles.th}>Tono</th>
+              <th style={styles.th}>Cantidad</th><th style={styles.th}>Cliente</th><th style={styles.th}>Status</th><th style={styles.th}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.length === 0 && <tr><td colSpan={7} style={styles.emptyCell}>Aún no has registrado productos por comprar.</td></tr>}
+            {sorted.map((pc) => (
+              <tr key={pc.id}>
+                <td style={styles.td}>
+                  <TextCellInput value={pc.producto} onSave={(nuevo) => onUpdate(pc.id, { producto: nuevo })} width={160} />
+                </td>
+                <td style={styles.td}>
+                  <TextCellInput value={pc.sku} onSave={(nuevo) => onUpdate(pc.id, { sku: nuevo })} width={100} />
+                </td>
+                <td style={styles.td}>
+                  <TextCellInput value={pc.tono} onSave={(nuevo) => onUpdate(pc.id, { tono: nuevo })} width={100} />
+                </td>
+                <td style={styles.td}>
+                  <CantidadInput value={pc.cantidad} onSave={(nueva) => onUpdate(pc.id, { cantidad: Number(nueva) || 0 })} />
+                </td>
+                <td style={styles.td}>
+                  <TextCellInput value={pc.cliente} onSave={(nuevo) => onUpdate(pc.id, { cliente: nuevo })} width={140} />
+                </td>
+                <td style={styles.td}>
+                  <select style={{ ...styles.priceInput, width: 170 }} value={pc.status || STATUS_OPCIONES[3]} onChange={(e) => onUpdate(pc.id, { status: e.target.value })}>
+                    {STATUS_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </td>
+                <td style={styles.td}><button style={styles.iconBtn} onClick={() => onDelete(pc.id)} title="Eliminar registro"><Trash2 size={15} /></button></td>
               </tr>
             ))}
           </tbody>
