@@ -21,6 +21,8 @@ const CATEGORIAS = [
   "CORPORAL", "CAPILAR", "DISNEY", "COLECCIÓN URBAN", "MINITREDYLOVERS", "OTRO",
 ];
 
+const QUIEN_PAGO_OPCIONES = ["Erick", "Aleja", "Nequi"];
+
 export default function InventarioApp() {
   const [tab, setTab] = useState("inventario");
   const [productos, setProductos] = useState([]);
@@ -99,6 +101,14 @@ export default function InventarioApp() {
     const { error } = await supabase.from("compras").delete().eq("id", id);
     if (error) setError("No se pudo eliminar la compra.");
   }
+  async function updateCompra(id, patch) {
+    setCompras((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+    const { error } = await supabase.from("compras").update(patch).eq("id", id);
+    if (error) {
+      setError("No se pudo actualizar la compra.");
+      fetchAll();
+    }
+  }
   async function addVenta(v) {
     const { error } = await supabase.from("ventas").insert({
       nombre_producto: v.nombreProducto, cantidad: v.cantidad, precio_venta: v.precioVenta, valor_total: v.valorTotal,
@@ -176,7 +186,7 @@ export default function InventarioApp() {
           <InventarioTab productos={productos} onAdd={addProducto} onDelete={deleteProducto} onUpdatePrecioVenta={updatePrecioVenta} onUpdateCantidad={updateCantidad} />
         )}
         {tab === "compras" && (
-          <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} />
+          <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onUpdate={updateCompra} />
         )}
         {tab === "ventas" && (
           <VentasTab ventas={ventas} onAdd={addVenta} onDelete={deleteVenta} onUpdateFechaPago={updateFechaPago} onUpdateFechaEntrega={updateFechaEntrega} onUpdateAbono={updateAbono} />
@@ -304,9 +314,10 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
 }
 
 /* ---------------- COMPRAS ---------------- */
-function ComprasTab({ productos, compras, onAdd, onDelete }) {
+function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ nombreProducto: "", sku: "", cantidad: "1", valorUnitario: "", fecha: today(), quienPago: "", factura: "" });
+  const [facturaFiltro, setFacturaFiltro] = useState("");
 
   const totalCompras = compras.reduce((s, c) => s + Number(c.valor_total || 0), 0);
 
@@ -326,15 +337,24 @@ function ComprasTab({ productos, compras, onAdd, onDelete }) {
     setShowForm(false);
   }
 
-  const productoNombre = (c) =>
-    c.nombre_producto || productos.find((p) => p.id === c.producto_id)?.nombre || "(sin nombre)";
-  const sorted = [...compras];
+  const productoNombreValor = (c) => c.nombre_producto || productos.find((p) => p.id === c.producto_id)?.nombre || "";
+
+  function updateCantidadCompra(c, cantidad) {
+    const nuevaCantidad = Number(cantidad) || 0;
+    onUpdate(c.id, { cantidad: nuevaCantidad, valor_total: nuevaCantidad * Number(c.valor_unitario || 0) });
+  }
+  function updateValorUnitarioCompra(c, valorUnitario) {
+    const nuevoValor = Number(valorUnitario) || 0;
+    onUpdate(c.id, { valor_unitario: nuevoValor, valor_total: Number(c.cantidad || 0) * nuevoValor });
+  }
+
+  const facturaKey = (c) => (c.factura || "").trim() || "__sin_factura__";
 
   const facturasMap = new Map();
   for (const c of compras) {
-    const key = (c.factura || "").trim() || "__sin_factura__";
+    const key = facturaKey(c);
     if (!facturasMap.has(key)) {
-      facturasMap.set(key, { factura: (c.factura || "").trim() || "Sin factura", fechaMin: c.fecha, fechaMax: c.fecha, unidades: 0, total: 0, lineas: 0 });
+      facturasMap.set(key, { key, factura: (c.factura || "").trim() || "Sin factura", fechaMin: c.fecha, fechaMax: c.fecha, unidades: 0, total: 0, lineas: 0 });
     }
     const entry = facturasMap.get(key);
     entry.unidades += Number(c.cantidad || 0);
@@ -344,6 +364,8 @@ function ComprasTab({ productos, compras, onAdd, onDelete }) {
     if (c.fecha && (!entry.fechaMax || c.fecha > entry.fechaMax)) entry.fechaMax = c.fecha;
   }
   const resumenFacturas = Array.from(facturasMap.values()).sort((a, b) => (b.fechaMax || "").localeCompare(a.fechaMax || ""));
+
+  const sorted = facturaFiltro ? compras.filter((c) => facturaKey(c) === facturaFiltro) : [];
 
   return (
     <div>
@@ -376,7 +398,10 @@ function ComprasTab({ productos, compras, onAdd, onDelete }) {
               <input type="date" style={styles.input} value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} />
             </Field>
             <Field label="Quién pagó">
-              <input style={styles.input} value={form.quienPago} onChange={(e) => setForm({ ...form, quienPago: e.target.value })} placeholder="Erick, Alejandra, Nequi…" />
+              <select style={styles.input} value={form.quienPago} onChange={(e) => setForm({ ...form, quienPago: e.target.value })}>
+                <option value="">Selecciona…</option>
+                {QUIEN_PAGO_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
             </Field>
             <Field label="N.º de factura">
               <input style={styles.input} value={form.factura} onChange={(e) => setForm({ ...form, factura: e.target.value })} />
@@ -401,7 +426,7 @@ function ComprasTab({ productos, compras, onAdd, onDelete }) {
           <tbody>
             {resumenFacturas.length === 0 && <tr><td colSpan={4} style={styles.emptyCell}>Aún no has registrado compras.</td></tr>}
             {resumenFacturas.map((f) => (
-              <tr key={f.factura}>
+              <tr key={f.key}>
                 <td style={styles.td}><strong>{f.factura}</strong></td>
                 <td style={styles.tdMuted}>{f.fechaMin === f.fechaMax ? fmtDate(f.fechaMin) : `${fmtDate(f.fechaMin)} – ${fmtDate(f.fechaMax)}`}</td>
                 <td style={styles.td}>{f.unidades}</td>
@@ -412,7 +437,16 @@ function ComprasTab({ productos, compras, onAdd, onDelete }) {
         </table>
       </div>
 
-      <h3 style={styles.sectionTitle}>Detalle de compras</h3>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <h3 style={{ ...styles.sectionTitle, margin: 0 }}>Detalle de compras</h3>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 220 }}>
+          <label style={styles.label}>Filtrar por factura</label>
+          <select style={styles.input} value={facturaFiltro} onChange={(e) => setFacturaFiltro(e.target.value)}>
+            <option value="">Selecciona una factura…</option>
+            {resumenFacturas.map((f) => <option key={f.key} value={f.key}>{f.factura}</option>)}
+          </select>
+        </div>
+      </div>
       <div style={styles.tableWrap}>
         <table style={styles.table}>
           <thead>
@@ -423,17 +457,37 @@ function ComprasTab({ productos, compras, onAdd, onDelete }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.length === 0 && <tr><td colSpan={9} style={styles.emptyCell}>Aún no has registrado compras.</td></tr>}
+            {sorted.length === 0 && (
+              <tr>
+                <td colSpan={9} style={styles.emptyCell}>
+                  {facturaFiltro ? "Esta factura no tiene compras registradas." : "Selecciona una factura arriba para ver el detalle de sus compras."}
+                </td>
+              </tr>
+            )}
             {sorted.map((c) => (
               <tr key={c.id}>
-                <td style={styles.tdMuted}>{fmtDate(c.fecha)}</td>
-                <td style={styles.td}><strong>{productoNombre(c)}</strong></td>
-                <td style={styles.tdMuted}>{c.sku || "—"}</td>
-                <td style={styles.td}>{c.cantidad}</td>
-                <td style={styles.td}>{fmt(c.valor_unitario)}</td>
+                <td style={styles.td}>
+                  <FechaPagoInput value={c.fecha} onSave={(nueva) => onUpdate(c.id, { fecha: nueva })} />
+                </td>
+                <td style={styles.td}>
+                  <TextCellInput value={productoNombreValor(c)} onSave={(nuevo) => onUpdate(c.id, { nombre_producto: nuevo })} width={160} />
+                </td>
+                <td style={styles.td}>
+                  <TextCellInput value={c.sku} onSave={(nuevo) => onUpdate(c.id, { sku: nuevo })} width={100} />
+                </td>
+                <td style={styles.td}>
+                  <CantidadInput value={c.cantidad} onSave={(nueva) => updateCantidadCompra(c, nueva)} />
+                </td>
+                <td style={styles.td}>
+                  <PrecioVentaInput value={c.valor_unitario} onSave={(nuevo) => updateValorUnitarioCompra(c, nuevo)} />
+                </td>
                 <td style={styles.td}>{fmt(c.valor_total)}</td>
-                <td style={styles.tdMuted}>{c.quien_pago || "—"}</td>
-                <td style={styles.tdMuted}>{c.factura || "—"}</td>
+                <td style={styles.td}>
+                  <QuienPagoSelect value={c.quien_pago} onSave={(nuevo) => onUpdate(c.id, { quien_pago: nuevo })} />
+                </td>
+                <td style={styles.td}>
+                  <TextCellInput value={c.factura} onSave={(nuevo) => onUpdate(c.id, { factura: nuevo })} width={110} />
+                </td>
                 <td style={styles.td}><button style={styles.iconBtn} onClick={() => onDelete(c.id)} title="Eliminar compra"><Trash2 size={15} /></button></td>
               </tr>
             ))}
@@ -688,6 +742,39 @@ function FechaPagoInput({ value, onSave }) {
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
     />
+  );
+}
+function TextCellInput({ value, onSave, width }) {
+  const [draft, setDraft] = useState(value || "");
+
+  useEffect(() => {
+    setDraft(value || "");
+  }, [value]);
+
+  function commit() {
+    if (draft !== (value || "")) onSave(draft);
+  }
+
+  return (
+    <input
+      type="text"
+      style={{ ...styles.priceInput, width: width || 140 }}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+    />
+  );
+}
+function QuienPagoSelect({ value, onSave }) {
+  const opciones = value && !QUIEN_PAGO_OPCIONES.includes(value) ? [value, ...QUIEN_PAGO_OPCIONES] : QUIEN_PAGO_OPCIONES;
+  return (
+    <select style={{ ...styles.priceInput, width: 110 }} value={value || ""} onChange={(e) => onSave(e.target.value)}>
+      <option value="">—</option>
+      {opciones.map((o) => <option key={o} value={o}>{o}</option>)}
+    </select>
   );
 }
 function Field({ label, children, wide }) {
