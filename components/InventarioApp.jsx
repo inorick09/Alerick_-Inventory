@@ -552,7 +552,7 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate }) {
 }
 
 /* ---------------- VENTAS ---------------- */
-const VENTAS_FILTROS_VACIOS = { cliente: "", producto: "", fechaPago: "", soloConSaldo: false };
+const VENTAS_FILTROS_VACIOS = { cliente: "", producto: "", fechaEntrega: "", fechaPago: "", soloConSaldo: false };
 
 function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEntrega, onUpdateAbono }) {
   const [showForm, setShowForm] = useState(false);
@@ -580,11 +580,12 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
   }
 
   const filtrosActivos =
-    filters.cliente.trim() !== "" || filters.producto.trim() !== "" || filters.fechaPago !== "" || filters.soloConSaldo;
+    filters.cliente.trim() !== "" || filters.producto.trim() !== "" || filters.fechaEntrega !== "" || filters.fechaPago !== "" || filters.soloConSaldo;
 
   const filtered = ventas.filter((v) => {
     if (filters.cliente.trim() && !(v.cliente || "").toLowerCase().includes(filters.cliente.trim().toLowerCase())) return false;
     if (filters.producto.trim() && !(v.nombre_producto || "").toLowerCase().includes(filters.producto.trim().toLowerCase())) return false;
+    if (filters.fechaEntrega && v.fecha_entrega !== filters.fechaEntrega) return false;
     if (filters.fechaPago && v.fecha_pago !== filters.fechaPago) return false;
     if (filters.soloConSaldo && !((Number(v.saldo) || 0) > 0)) return false;
     return true;
@@ -623,6 +624,9 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
             </Field>
             <Field label="Producto">
               <input style={styles.input} value={filters.producto} onChange={(e) => setFilters({ ...filters, producto: e.target.value })} placeholder="Buscar por producto…" />
+            </Field>
+            <Field label="Fecha de entrega">
+              <input type="date" style={styles.input} value={filters.fechaEntrega} onChange={(e) => setFilters({ ...filters, fechaEntrega: e.target.value })} />
             </Field>
             <Field label="Fecha de pago">
               <input type="date" style={styles.input} value={filters.fechaPago} onChange={(e) => setFilters({ ...filters, fechaPago: e.target.value })} />
