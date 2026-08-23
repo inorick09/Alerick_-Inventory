@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle, SlidersHorizontal, Wallet, ClipboardList } from "lucide-react";
+import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle, SlidersHorizontal, Wallet, ClipboardList, Download } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const fmt = (n) =>
@@ -24,6 +24,11 @@ const CATEGORIAS = [
 const QUIEN_PAGO_OPCIONES = ["Erick", "Aleja", "Nequi"];
 
 const STATUS_OPCIONES = ["Agotado", "Inventario Erik", "Inventario Aleja", "Por comprar", "Comprado"];
+
+const METODO_PAGO_OPCIONES = ["Efectivo", "Nequi", "Daviplata", "Transferencia", "Tarjeta", "Pendiente"];
+
+const escapeHtml = (str) =>
+  String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 export default function InventarioApp() {
   const [tab, setTab] = useState("inventario");
@@ -653,15 +658,15 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
             <Field label="Fecha de entrega *">
               <input type="date" style={styles.input} value={form.fechaEntrega} onChange={(e) => setForm({ ...form, fechaEntrega: e.target.value })} required />
             </Field>
-            <Field label="Fecha de pago *">
-              <input type="date" style={styles.input} value={form.fechaPago} onChange={(e) => setForm({ ...form, fechaPago: e.target.value })} required />
+            <Field label="Fecha de pago">
+              <input type="date" style={styles.input} value={form.fechaPago} onChange={(e) => setForm({ ...form, fechaPago: e.target.value })} />
             </Field>
             <Field label="Abono recibido *">
               <input type="number" min="0" style={styles.input} value={form.abono} onChange={(e) => setForm({ ...form, abono: e.target.value })} required />
             </Field>
             <Field label="Método de pago *">
               <select style={styles.input} value={form.metodoPago} onChange={(e) => setForm({ ...form, metodoPago: e.target.value })} required>
-                <option>Efectivo</option><option>Nequi</option><option>Daviplata</option><option>Transferencia</option><option>Tarjeta</option>
+                {METODO_PAGO_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             </Field>
           </div>
@@ -810,9 +815,46 @@ function BalanceTab({ ventas, compras, pagosPendientes, onAdd, onDelete }) {
   );
 }
 
+const PORCOMPRAR_FILTROS_VACIOS = { cliente: "", status: "" };
+
+function exportResumenPDF(resumenAgrupado) {
+  const rows = [];
+  resumenAgrupado.forEach((g) => {
+    g.tonos.forEach(([tono, cantidad], i) => {
+      rows.push(
+        `<tr><td>${i === 0 ? escapeHtml(g.producto) : ""}</td><td>${i === 0 ? escapeHtml(g.sku || "—") : ""}</td><td>${escapeHtml(tono)}</td><td>${escapeHtml(cantidad)}</td></tr>`
+      );
+    });
+  });
+  const html = `<!doctype html><html><head><meta charset="utf-8" /><title>Resumen: agotado y por comprar</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 24px; color: #3B2A33; }
+      h1 { font-size: 18px; margin-bottom: 4px; }
+      p.meta { font-size: 12px; color: #8B6B76; margin-top: 0; margin-bottom: 16px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border: 1px solid #ddd; padding: 6px 10px; font-size: 13px; text-align: left; }
+      th { background: #FCEFE0; }
+    </style>
+  </head><body>
+    <h1>Resumen: agotado y por comprar</h1>
+    <p class="meta">Generado el ${escapeHtml(new Date().toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" }))}</p>
+    <table>
+      <thead><tr><th>Producto</th><th>SKU</th><th>Tono</th><th>Cantidad</th></tr></thead>
+      <tbody>${rows.join("") || `<tr><td colspan="4">No hay productos agotados ni por comprar.</td></tr>`}</tbody>
+    </table>
+  </body></html>`;
+  const win = window.open("", "_blank");
+  if (!win) return;
+  win.document.write(html);
+  win.document.close();
+  win.onload = () => { win.focus(); win.print(); };
+}
+
 /* ---------------- POR COMPRAR ---------------- */
 function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
   const [showForm, setShowForm] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState(PORCOMPRAR_FILTROS_VACIOS);
   const [form, setForm] = useState({ producto: "", sku: "", tono: "", cantidad: "1", cliente: "", status: STATUS_OPCIONES[3] });
 
   function submit(e) {
@@ -826,7 +868,13 @@ function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
     setShowForm(false);
   }
 
-  const sorted = [...items];
+  const filtrosActivos = filters.cliente.trim() !== "" || filters.status !== "";
+
+  const sorted = items.filter((pc) => {
+    if (filters.cliente.trim() && !(pc.cliente || "").toLowerCase().includes(filters.cliente.trim().toLowerCase())) return false;
+    if (filters.status && pc.status !== filters.status) return false;
+    return true;
+  });
 
   const resumenMap = new Map();
   for (const pc of items) {
@@ -847,7 +895,10 @@ function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
         <StatCard label="Productos por comprar" value={items.length} />
       </div>
 
-      <h3 style={styles.sectionTitle}>Resumen: agotado y por comprar</h3>
+      <div style={{ ...styles.toolbar, marginBottom: 10 }}>
+        <h3 style={{ ...styles.sectionTitle, margin: 0 }}>Resumen: agotado y por comprar</h3>
+        <button style={styles.ghostBtn} onClick={() => exportResumenPDF(resumenAgrupado)}><Download size={15} /> Exportar PDF</button>
+      </div>
       <div style={{ ...styles.tableWrap, marginBottom: 20 }}>
         <table style={styles.table}>
           <thead>
@@ -877,9 +928,30 @@ function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
 
       <h3 style={styles.sectionTitle}>Detalle completo</h3>
       <div style={styles.toolbar}>
-        <div />
+        <button style={{ ...styles.ghostBtn, ...(filtrosActivos ? styles.ghostBtnActive : {}) }} onClick={() => setShowFilters((s) => !s)}>
+          <SlidersHorizontal size={15} /> Filtros{filtrosActivos ? " •" : ""}
+        </button>
         <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar producto</button>
       </div>
+
+      {showFilters && (
+        <div style={styles.card}>
+          <div style={styles.formGrid}>
+            <Field label="Cliente">
+              <input style={styles.input} value={filters.cliente} onChange={(e) => setFilters({ ...filters, cliente: e.target.value })} placeholder="Buscar por cliente…" />
+            </Field>
+            <Field label="Status">
+              <select style={styles.input} value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
+                <option value="">Todos</option>
+                {STATUS_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div style={styles.formActions}>
+            <button type="button" style={styles.ghostBtn} onClick={() => setFilters(PORCOMPRAR_FILTROS_VACIOS)}>Limpiar filtros</button>
+          </div>
+        </div>
+      )}
 
       {showForm && (
         <form onSubmit={submit} style={styles.card}>
@@ -921,7 +993,7 @@ function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.length === 0 && <tr><td colSpan={7} style={styles.emptyCell}>Aún no has registrado productos por comprar.</td></tr>}
+            {sorted.length === 0 && <tr><td colSpan={7} style={styles.emptyCell}>{filtrosActivos ? "Ningún resultado coincide con los filtros." : "Aún no has registrado productos por comprar."}</td></tr>}
             {sorted.map((pc) => (
               <tr key={pc.id}>
                 <td style={styles.td}>
