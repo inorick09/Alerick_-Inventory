@@ -127,7 +127,7 @@ export default function InventarioApp() {
   async function addVenta(v) {
     const { error } = await supabase.from("ventas").insert({
       nombre_producto: v.nombreProducto, cantidad: v.cantidad, precio_venta: v.precioVenta, valor_total: v.valorTotal,
-      cliente: v.cliente, fecha_entrega: v.fechaEntrega, fecha_pago: v.fechaPago || null, abono: v.abono, saldo: v.saldo, metodo_pago: v.metodoPago,
+      cliente: v.cliente, fecha_entrega: v.fechaEntrega || today(), fecha_pago: v.fechaPago || null, abono: v.abono, saldo: v.saldo, metodo_pago: v.metodoPago,
     });
     if (error) setError("No se pudo guardar la venta.");
     else fetchAll();
@@ -655,8 +655,8 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
             <Field label="Cliente *">
               <input style={styles.input} value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })} required />
             </Field>
-            <Field label="Fecha de entrega *">
-              <input type="date" style={styles.input} value={form.fechaEntrega} onChange={(e) => setForm({ ...form, fechaEntrega: e.target.value })} required />
+            <Field label="Fecha de entrega">
+              <input type="date" style={styles.input} value={form.fechaEntrega} onChange={(e) => setForm({ ...form, fechaEntrega: e.target.value })} />
             </Field>
             <Field label="Fecha de pago">
               <input type="date" style={styles.input} value={form.fechaPago} onChange={(e) => setForm({ ...form, fechaPago: e.target.value })} />
