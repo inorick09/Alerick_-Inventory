@@ -30,6 +30,24 @@ const METODO_PAGO_OPCIONES = ["Efectivo", "Nequi", "Daviplata", "Transferencia",
 const escapeHtml = (str) =>
   String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+// Supabase/PostgREST solo devuelve hasta 1000 filas por consulta por defecto.
+// Con .select("*") sin paginar, cualquier tabla que supere ese límite se trunca
+// en silencio (sin error) y el front-end termina filtrando sobre datos incompletos.
+// Este helper pagina con .range() hasta traer todas las filas, sin importar
+// cuántas haya ni cuál sea el límite configurado en el proyecto.
+async function fetchAllRows(buildQuery, pageSize = 1000) {
+  let from = 0;
+  let all = [];
+  while (true) {
+    const { data, error } = await buildQuery(from, from + pageSize - 1);
+    if (error) return { data: null, error };
+    all = all.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return { data: all, error: null };
+}
+
 export default function InventarioApp() {
   const [tab, setTab] = useState("inventario");
   const [productos, setProductos] = useState([]);
@@ -42,11 +60,11 @@ export default function InventarioApp() {
 
   const fetchAll = useCallback(async () => {
     const [p, c, v, pp, pc] = await Promise.all([
-      supabase.from("productos").select("*").order("nombre"),
-      supabase.from("compras").select("*").order("fecha", { ascending: false }),
-      supabase.from("ventas").select("*").order("fecha_entrega", { ascending: false }),
-      supabase.from("pagos_pendientes").select("*").order("fecha", { ascending: false }),
-      supabase.from("por_comprar").select("*").order("created_at", { ascending: false }),
+      fetchAllRows((from, to) => supabase.from("productos").select("*").order("nombre").range(from, to)),
+      fetchAllRows((from, to) => supabase.from("compras").select("*").order("fecha", { ascending: false }).range(from, to)),
+      fetchAllRows((from, to) => supabase.from("ventas").select("*").order("fecha_entrega", { ascending: false }).range(from, to)),
+      fetchAllRows((from, to) => supabase.from("pagos_pendientes").select("*").order("fecha", { ascending: false }).range(from, to)),
+      fetchAllRows((from, to) => supabase.from("por_comprar").select("*").order("created_at", { ascending: false }).range(from, to)),
     ]);
     if (p.error || c.error || v.error || pp.error || pc.error) {
       setError("No se pudo conectar con la base de datos. Revisa la configuración de Supabase.");
