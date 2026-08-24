@@ -42,7 +42,7 @@ create table if not exists ventas (
   precio_venta numeric not null default 0,
   valor_total numeric not null default 0,
   cliente text,
-  fecha_entrega date not null default current_date,
+  fecha_entrega date default current_date,
   fecha_pago date,
   abono numeric default 0,
   saldo numeric default 0,
@@ -53,6 +53,10 @@ create table if not exists ventas (
 -- Si la tabla ventas ya existía antes de agregar nombre_producto y fecha_pago, ejecuta estas líneas:
 alter table ventas add column if not exists nombre_producto text;
 alter table ventas add column if not exists fecha_pago date;
+
+-- fecha_entrega ahora acepta valores vacíos (antes era NOT NULL, lo que forzaba
+-- fechas placeholder tipo 0001-01-01 en registros importados sin fecha real):
+alter table ventas alter column fecha_entrega drop not null;
 
 create table if not exists pagos_pendientes (
   id uuid primary key default gen_random_uuid(),

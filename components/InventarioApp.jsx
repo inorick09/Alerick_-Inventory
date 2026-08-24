@@ -62,7 +62,7 @@ export default function InventarioApp() {
     const [p, c, v, pp, pc] = await Promise.all([
       fetchAllRows((from, to) => supabase.from("productos").select("*").order("nombre").range(from, to)),
       fetchAllRows((from, to) => supabase.from("compras").select("*").order("fecha", { ascending: false }).range(from, to)),
-      fetchAllRows((from, to) => supabase.from("ventas").select("*").order("fecha_entrega", { ascending: false }).range(from, to)),
+      fetchAllRows((from, to) => supabase.from("ventas").select("*").order("fecha_entrega", { ascending: false, nullsFirst: false }).range(from, to)),
       fetchAllRows((from, to) => supabase.from("pagos_pendientes").select("*").order("fecha", { ascending: false }).range(from, to)),
       fetchAllRows((from, to) => supabase.from("por_comprar").select("*").order("created_at", { ascending: false }).range(from, to)),
     ]);
@@ -163,8 +163,8 @@ export default function InventarioApp() {
     }
   }
   async function updateFechaEntrega(id, fechaEntrega) {
-    setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, fecha_entrega: fechaEntrega } : v)));
-    const { error } = await supabase.from("ventas").update({ fecha_entrega: fechaEntrega }).eq("id", id);
+    setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, fecha_entrega: fechaEntrega || null } : v)));
+    const { error } = await supabase.from("ventas").update({ fecha_entrega: fechaEntrega || null }).eq("id", id);
     if (error) {
       setError("No se pudo actualizar la fecha de entrega.");
       fetchAll();
