@@ -613,6 +613,9 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
     ? filtered
     : [...ventas].sort((a, b) => (b.fecha_pago || "").localeCompare(a.fecha_pago || "")).slice(0, 50);
 
+  const abonoFiltrado = filtered.reduce((s, v) => s + Number(v.abono || 0), 0);
+  const saldoFiltrado = filtered.reduce((s, v) => s + Number(v.saldo || 0), 0);
+
   return (
     <div>
       <div style={styles.statRow}>
@@ -621,11 +624,30 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
         <StatCard label="Saldo por cobrar" value={fmt(totalSaldo)} accent />
       </div>
 
+      {filtrosActivos && (
+        <div style={styles.statRow}>
+          <StatCard label="Resultados filtrados" value={filtered.length} />
+          <StatCard label="Vendido (filtrado)" value={fmt(abonoFiltrado)} />
+          <StatCard label="Saldo (filtrado)" value={fmt(saldoFiltrado)} accent />
+        </div>
+      )}
+
       <div style={styles.toolbar}>
         <button style={{ ...styles.ghostBtn, ...(filtrosActivos ? styles.ghostBtnActive : {}) }} onClick={() => setShowFilters((s) => !s)}>
           <SlidersHorizontal size={15} /> Filtros{filtrosActivos ? " •" : ""}
         </button>
         <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar venta</button>
+        <button
+          style={styles.ghostBtn}
+          onClick={() =>
+            exportVentasPNG(sorted, {
+              totalAbono: filtrosActivos ? abonoFiltrado : totalAbonos,
+              totalSaldo: filtrosActivos ? saldoFiltrado : totalSaldo,
+            }, filtrosActivos)
+          }
+        >
+          <Download size={15} /> Exportar PNG
+        </button>
       </div>
 
       {!filtrosActivos && ventas.length > 50 && (
@@ -741,6 +763,123 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
       </div>
     </div>
   );
+}
+
+function truncateToWidth(ctx, text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let truncated = text;
+  while (truncated.length > 1 && ctx.measureText(truncated + "…").width > maxWidth) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated + "…";
+}
+
+function exportVentasPNG(rows, resumen, filtrosActivos) {
+  const cols = [
+    { key: "producto", label: "Producto", width: 170 },
+    { key: "cantidad", label: "Cant.", width: 55 },
+    { key: "cliente", label: "Cliente", width: 130 },
+    { key: "total", label: "Total", width: 100 },
+    { key: "fentrega", label: "F. entrega", width: 95 },
+    { key: "fpago", label: "F. pago", width: 95 },
+    { key: "abono", label: "Abono", width: 100 },
+    { key: "saldo", label: "Saldo", width: 100 },
+    { key: "pago", label: "Pago", width: 90 },
+  ];
+  const padding = 24;
+  const rowHeight = 30;
+  const headerHeight = 34;
+  const titleHeight = 62;
+  const footerHeight = 56;
+  const tableWidth = cols.reduce((s, c) => s + c.width, 0);
+  const width = tableWidth + padding * 2;
+  const bodyHeight = Math.max(rows.length, 1) * rowHeight;
+  const height = titleHeight + headerHeight + bodyHeight + footerHeight + padding;
+
+  const scale = 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(scale, scale);
+
+  ctx.fillStyle = "#FBF3F1";
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = "#3B2A33";
+  ctx.font = "bold 18px Arial";
+  ctx.fillText(`Reporte de ventas${filtrosActivos ? " (filtrado)" : ""}`, padding, 30);
+  ctx.font = "12px Arial";
+  ctx.fillStyle = "#8B6B76";
+  ctx.fillText(
+    `Generado el ${new Date().toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" })}`,
+    padding,
+    48
+  );
+
+  let y = titleHeight;
+  ctx.fillStyle = "#FCEFE0";
+  ctx.fillRect(padding, y, tableWidth, headerHeight);
+  ctx.fillStyle = "#8B6B76";
+  ctx.font = "bold 11px Arial";
+  let x = padding;
+  cols.forEach((c) => {
+    ctx.fillText(c.label.toUpperCase(), x + 8, y + 21);
+    x += c.width;
+  });
+
+  y += headerHeight;
+  ctx.font = "12px Arial";
+  if (rows.length === 0) {
+    ctx.fillStyle = "#8B6B76";
+    ctx.fillText("No hay ventas para mostrar.", padding + 8, y + 20);
+    y += rowHeight;
+  } else {
+    rows.forEach((v, i) => {
+      if (i % 2 === 1) {
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(padding, y, tableWidth, rowHeight);
+      }
+      const values = [
+        v.nombre_producto || "—",
+        String(v.cantidad ?? "—"),
+        v.cliente || "—",
+        fmt(v.valor_total),
+        fmtDate(v.fecha_entrega),
+        fmtDate(v.fecha_pago),
+        fmt(v.abono),
+        fmt(v.saldo),
+        v.metodo_pago || "—",
+      ];
+      x = padding;
+      ctx.font = "12px Arial";
+      cols.forEach((c, ci) => {
+        ctx.fillStyle = ci === 7 && Number(v.saldo) > 0 ? "#A9791F" : "#3B2A33";
+        const text = truncateToWidth(ctx, values[ci], c.width - 16);
+        ctx.fillText(text, x + 8, y + 20);
+        x += c.width;
+      });
+      y += rowHeight;
+    });
+  }
+
+  y += 18;
+  ctx.fillStyle = "#D9678C";
+  ctx.font = "bold 14px Arial";
+  ctx.fillText(`Total vendido: ${fmt(resumen.totalAbono)}`, padding, y);
+  ctx.fillText(`Saldo total: ${fmt(resumen.totalSaldo)}`, padding, y + 22);
+
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ventas_${today()}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, "image/png");
 }
 
 /* ---------------- BALANCE ---------------- */
