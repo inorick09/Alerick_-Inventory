@@ -78,12 +78,77 @@ create table if not exists por_comprar (
   created_at timestamptz default now()
 );
 
+-- Catálogo unificado de clientes. `ventas.cliente` y `por_comprar.cliente` siguen
+-- siendo texto libre (para no romper la app ni datos existentes), pero un trigger
+-- (ver más abajo) normaliza cada valor contra este catálogo antes de guardarlo:
+-- si ya existe un cliente con ese nombre (sin importar mayúsculas/acentos/espacios),
+-- reescribe el valor a la forma oficial; si es nuevo, lo registra aquí tal cual.
+create extension if not exists "unaccent" with schema extensions;
+
+create table if not exists clientes (
+  id uuid primary key default gen_random_uuid(),
+  nombre text not null unique,
+  created_at timestamptz not null default now()
+);
+
+create or replace function fn_normalizar_cliente()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_input text;
+  v_match text;
+begin
+  if new.cliente is null then
+    return new;
+  end if;
+
+  v_input := regexp_replace(btrim(new.cliente), '\s+', ' ', 'g');
+
+  if v_input = '' then
+    new.cliente := null;
+    return new;
+  end if;
+
+  select nombre into v_match
+  from clientes
+  where lower(unaccent(nombre)) = lower(unaccent(v_input))
+  limit 1;
+
+  if v_match is not null then
+    new.cliente := v_match;
+  else
+    insert into clientes (nombre) values (v_input) on conflict (nombre) do nothing;
+    new.cliente := v_input;
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke execute on function fn_normalizar_cliente() from public;
+revoke execute on function fn_normalizar_cliente() from anon;
+revoke execute on function fn_normalizar_cliente() from authenticated;
+
+drop trigger if exists trg_normalizar_cliente_ventas on ventas;
+create trigger trg_normalizar_cliente_ventas
+  before insert or update of cliente on ventas
+  for each row execute function fn_normalizar_cliente();
+
+drop trigger if exists trg_normalizar_cliente_por_comprar on por_comprar;
+create trigger trg_normalizar_cliente_por_comprar
+  before insert or update of cliente on por_comprar
+  for each row execute function fn_normalizar_cliente();
+
 -- Habilita el acceso en tiempo real (para que ambos vean los cambios del otro al instante)
 alter publication supabase_realtime add table productos;
 alter publication supabase_realtime add table compras;
 alter publication supabase_realtime add table ventas;
 alter publication supabase_realtime add table pagos_pendientes;
 alter publication supabase_realtime add table por_comprar;
+alter publication supabase_realtime add table clientes;
 
 -- Seguridad a nivel de fila (RLS): la app ahora exige inicio de sesión (Supabase Auth).
 -- Solo usuarios autenticados (con cuenta creada en Authentication > Users) pueden leer o
@@ -105,3 +170,7 @@ create policy "solo autenticados compras" on compras for all using (auth.role() 
 create policy "solo autenticados ventas" on ventas for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 create policy "solo autenticados pagos_pendientes" on pagos_pendientes for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 create policy "solo autenticados por_comprar" on por_comprar for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+alter table clientes enable row level security;
+drop policy if exists "solo autenticados clientes" on clientes;
+create policy "solo autenticados clientes" on clientes for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');

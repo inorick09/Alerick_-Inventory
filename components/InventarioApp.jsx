@@ -15,6 +15,7 @@ const fmtDate = (d) => {
   return dt.toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" });
 };
 const today = () => new Date().toISOString().slice(0, 10);
+const miles = (n) => new Intl.NumberFormat("es-CO").format(Number(n) || 0);
 
 const CATEGORIAS = [
   "ACCESORIOS", "LABIOS", "OJOS", "ROSTRO", "CEJAS", "BROCHAS", "CUIDADO FACIAL",
@@ -55,18 +56,20 @@ export default function InventarioApp() {
   const [ventas, setVentas] = useState([]);
   const [pagosPendientes, setPagosPendientes] = useState([]);
   const [porComprar, setPorComprar] = useState([]);
+  const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const fetchAll = useCallback(async () => {
-    const [p, c, v, pp, pc] = await Promise.all([
+    const [p, c, v, pp, pc, cl] = await Promise.all([
       fetchAllRows((from, to) => supabase.from("productos").select("*").order("nombre").range(from, to)),
       fetchAllRows((from, to) => supabase.from("compras").select("*").order("fecha", { ascending: false }).range(from, to)),
       fetchAllRows((from, to) => supabase.from("ventas").select("*").order("fecha_entrega", { ascending: false, nullsFirst: false }).range(from, to)),
       fetchAllRows((from, to) => supabase.from("pagos_pendientes").select("*").order("fecha", { ascending: false }).range(from, to)),
       fetchAllRows((from, to) => supabase.from("por_comprar").select("*").order("created_at", { ascending: false }).range(from, to)),
+      fetchAllRows((from, to) => supabase.from("clientes").select("*").order("nombre").range(from, to)),
     ]);
-    if (p.error || c.error || v.error || pp.error || pc.error) {
+    if (p.error || c.error || v.error || pp.error || pc.error || cl.error) {
       setError("No se pudo conectar con la base de datos. Revisa la configuración de Supabase.");
       return;
     }
@@ -76,6 +79,7 @@ export default function InventarioApp() {
     setVentas(v.data || []);
     setPagosPendientes(pp.data || []);
     setPorComprar(pc.data || []);
+    setClientes(cl.data || []);
   }, []);
 
   useEffect(() => {
@@ -88,6 +92,7 @@ export default function InventarioApp() {
       .on("postgres_changes", { event: "*", schema: "public", table: "ventas" }, fetchAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "pagos_pendientes" }, fetchAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "por_comprar" }, fetchAll)
+      .on("postgres_changes", { event: "*", schema: "public", table: "clientes" }, fetchAll)
       .subscribe();
 
     return () => {
@@ -262,13 +267,13 @@ export default function InventarioApp() {
           <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onUpdate={updateCompra} />
         )}
         {tab === "ventas" && (
-          <VentasTab ventas={ventas} onAdd={addVenta} onDelete={deleteVenta} onUpdate={updateVenta} onUpdateFechaPago={updateFechaPago} onUpdateFechaEntrega={updateFechaEntrega} onUpdateAbono={updateAbono} />
+          <VentasTab ventas={ventas} clientes={clientes} onAdd={addVenta} onDelete={deleteVenta} onUpdate={updateVenta} onUpdateFechaPago={updateFechaPago} onUpdateFechaEntrega={updateFechaEntrega} onUpdateAbono={updateAbono} />
         )}
         {tab === "balance" && (
           <BalanceTab ventas={ventas} compras={compras} pagosPendientes={pagosPendientes} onAdd={addPagoPendiente} onDelete={deletePagoPendiente} />
         )}
         {tab === "porcomprar" && (
-          <PorComprarTab items={porComprar} onAdd={addPorComprar} onDelete={deletePorComprar} onUpdate={updatePorComprar} />
+          <PorComprarTab items={porComprar} clientes={clientes} onAdd={addPorComprar} onDelete={deletePorComprar} onUpdate={updatePorComprar} />
         )}
       </main>
     </div>
@@ -558,7 +563,7 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate }) {
                   <CantidadInput value={c.cantidad} onSave={(nueva) => updateCantidadCompra(c, nueva)} />
                 </td>
                 <td style={styles.td}>
-                  <PrecioVentaInput value={c.valor_unitario} onSave={(nuevo) => updateValorUnitarioCompra(c, nuevo)} />
+                  <MoneyCellInput value={c.valor_unitario} onSave={(nuevo) => updateValorUnitarioCompra(c, nuevo)} />
                 </td>
                 <td style={styles.td}>{fmt(c.valor_total)}</td>
                 <td style={styles.td}>
@@ -580,7 +585,7 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate }) {
 /* ---------------- VENTAS ---------------- */
 const VENTAS_FILTROS_VACIOS = { cliente: "", producto: "", fechaEntrega: "", fechaPago: "", soloConSaldo: false };
 
-function VentasTab({ ventas, onAdd, onDelete, onUpdate, onUpdateFechaPago, onUpdateFechaEntrega, onUpdateAbono }) {
+function VentasTab({ ventas, clientes, onAdd, onDelete, onUpdate, onUpdateFechaPago, onUpdateFechaEntrega, onUpdateAbono }) {
   const [showForm, setShowForm] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState(VENTAS_FILTROS_VACIOS);
@@ -711,7 +716,13 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdate, onUpdateFechaPago, onUpd
               <input type="number" min="0" style={styles.input} value={form.precioVenta} onChange={(e) => setForm({ ...form, precioVenta: e.target.value })} required />
             </Field>
             <Field label="Cliente *">
-              <input style={styles.input} value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })} required />
+              <ClienteSelect
+                value={form.cliente}
+                clientes={clientes}
+                onChange={(nuevo) => setForm({ ...form, cliente: nuevo })}
+                inputStyle={styles.input}
+                required
+              />
             </Field>
             <Field label="Fecha de entrega">
               <input type="date" style={styles.input} value={form.fechaEntrega} onChange={(e) => setForm({ ...form, fechaEntrega: e.target.value })} />
@@ -757,10 +768,15 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdate, onUpdateFechaPago, onUpd
                   <CantidadInput value={v.cantidad} onSave={(nueva) => onUpdate(v.id, { cantidad: nueva })} />
                 </td>
                 <td style={styles.td}>
-                  <TextCellInput value={v.cliente} onSave={(nuevo) => onUpdate(v.id, { cliente: nuevo })} width={130} />
+                  <ClienteSelect
+                    value={v.cliente}
+                    clientes={clientes}
+                    onChange={(nuevo) => onUpdate(v.id, { cliente: nuevo })}
+                    width={140}
+                  />
                 </td>
                 <td style={styles.td}>
-                  <PrecioVentaInput value={v.valor_total} onSave={(nuevo) => updateValorTotalVenta(v, nuevo)} />
+                  <MoneyCellInput value={v.valor_total} onSave={(nuevo) => updateValorTotalVenta(v, nuevo)} />
                 </td>
                 <td style={styles.td}>
                   <FechaPagoInput value={v.fecha_entrega} onSave={(nueva) => onUpdateFechaEntrega(v.id, nueva)} />
@@ -769,7 +785,7 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdate, onUpdateFechaPago, onUpd
                   <FechaPagoInput value={v.fecha_pago} onSave={(nueva) => onUpdateFechaPago(v.id, nueva)} />
                 </td>
                 <td style={styles.td}>
-                  <PrecioVentaInput value={v.abono} onSave={(nuevo) => onUpdateAbono(v.id, nuevo)} />
+                  <MoneyCellInput value={v.abono} onSave={(nuevo) => onUpdateAbono(v.id, nuevo)} />
                 </td>
                 <td style={styles.td}><span style={{ ...styles.stockPill, ...(v.saldo > 0 ? styles.stockLow : {}) }}>{fmt(v.saldo)}</span></td>
                 <td style={styles.td}>
@@ -1032,7 +1048,7 @@ function exportResumenPDF(resumenAgrupado) {
 }
 
 /* ---------------- POR COMPRAR ---------------- */
-function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
+function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate }) {
   const [showForm, setShowForm] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState(PORCOMPRAR_FILTROS_VACIOS);
@@ -1150,7 +1166,13 @@ function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
               <input type="number" min="0" style={styles.input} value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} required />
             </Field>
             <Field label="Cliente *">
-              <input style={styles.input} value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })} required />
+              <ClienteSelect
+                value={form.cliente}
+                clientes={clientes}
+                onChange={(nuevo) => setForm({ ...form, cliente: nuevo })}
+                inputStyle={styles.input}
+                required
+              />
             </Field>
             <Field label="Status *">
               <select style={styles.input} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} required>
@@ -1190,7 +1212,12 @@ function PorComprarTab({ items, onAdd, onDelete, onUpdate }) {
                   <CantidadInput value={pc.cantidad} onSave={(nueva) => onUpdate(pc.id, { cantidad: Number(nueva) || 0 })} />
                 </td>
                 <td style={styles.td}>
-                  <TextCellInput value={pc.cliente} onSave={(nuevo) => onUpdate(pc.id, { cliente: nuevo })} width={140} />
+                  <ClienteSelect
+                    value={pc.cliente}
+                    clientes={clientes}
+                    onChange={(nuevo) => onUpdate(pc.id, { cliente: nuevo })}
+                    width={140}
+                  />
                 </td>
                 <td style={styles.td}>
                   <select style={{ ...styles.priceInput, width: 170 }} value={pc.status || STATUS_OPCIONES[3]} onChange={(e) => onUpdate(pc.id, { status: e.target.value })}>
@@ -1234,6 +1261,36 @@ function PrecioVentaInput({ value, onSave }) {
       min="0"
       style={styles.priceInput}
       value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+    />
+  );
+}
+function MoneyCellInput({ value, onSave, width }) {
+  const [focused, setFocused] = useState(false);
+  const [draft, setDraft] = useState(String(value ?? 0));
+
+  useEffect(() => {
+    if (!focused) setDraft(String(value ?? 0));
+  }, [value, focused]);
+
+  function commit() {
+    setFocused(false);
+    const nuevo = Number(draft.replace(/\D/g, "")) || 0;
+    if (nuevo !== Number(value)) onSave(nuevo);
+    else setDraft(String(value ?? 0));
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      style={{ ...styles.priceInput, width: width || 110 }}
+      value={focused ? draft : miles(value)}
+      onFocus={() => { setFocused(true); setDraft(String(Number(value) || 0)); }}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
@@ -1330,6 +1387,64 @@ function MetodoPagoSelect({ value, onSave }) {
     <select style={{ ...styles.priceInput, width: 110 }} value={value || ""} onChange={(e) => onSave(e.target.value)}>
       <option value="">—</option>
       {opciones.map((o) => <option key={o} value={o}>{o}</option>)}
+    </select>
+  );
+}
+// Lista desplegable de clientes, respaldada por la tabla `clientes` (el catálogo
+// unificado). Si el valor actual no está en el catálogo (dato antiguo o recién
+// escrito), se agrega igual como opción para no perder el dato. La opción
+// "+ Nuevo cliente…" abre un campo de texto: al confirmar, el nombre se guarda
+// tal cual y el trigger de la base de datos lo registra en el catálogo, así que
+// en la próxima carga ya aparece como una opción más de la lista.
+function ClienteSelect({ value, clientes, onChange, width, inputStyle, required }) {
+  const [modoNuevo, setModoNuevo] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const nombres = (clientes || [])
+    .map((c) => c.nombre)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "es"));
+  const opciones = value && !nombres.includes(value) ? [value, ...nombres] : nombres;
+  const baseStyle = inputStyle || { ...styles.priceInput, width: width || 150 };
+
+  function confirmarNuevo() {
+    const nombre = draft.trim();
+    setModoNuevo(false);
+    setDraft("");
+    if (nombre) onChange(nombre);
+  }
+
+  if (modoNuevo) {
+    return (
+      <input
+        autoFocus
+        type="text"
+        style={baseStyle}
+        placeholder="Nombre del nuevo cliente"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); confirmarNuevo(); }
+          if (e.key === "Escape") { setModoNuevo(false); setDraft(""); }
+        }}
+        onBlur={confirmarNuevo}
+      />
+    );
+  }
+
+  return (
+    <select
+      style={baseStyle}
+      value={value || ""}
+      required={required}
+      onChange={(e) => {
+        if (e.target.value === "__nuevo__") { setModoNuevo(true); return; }
+        onChange(e.target.value);
+      }}
+    >
+      <option value="">Selecciona un cliente…</option>
+      {opciones.map((n) => <option key={n} value={n}>{n}</option>)}
+      <option value="__nuevo__">+ Nuevo cliente…</option>
     </select>
   );
 }
