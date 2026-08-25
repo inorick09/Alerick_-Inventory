@@ -25,7 +25,7 @@ const QUIEN_PAGO_OPCIONES = ["Erick", "Aleja", "Nequi"];
 
 const STATUS_OPCIONES = ["Agotado", "Inventario Erik", "Inventario Aleja", "Por comprar", "Comprado"];
 
-const METODO_PAGO_OPCIONES = ["Efectivo", "Nequi", "Daviplata", "Transferencia", "Tarjeta", "Pendiente"];
+const METODO_PAGO_OPCIONES = ["Nequi", "Daviplata", "Llave", "Pendiente", "Nequi Erik"];
 
 const escapeHtml = (str) =>
   String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -154,6 +154,14 @@ export default function InventarioApp() {
     const { error } = await supabase.from("ventas").delete().eq("id", id);
     if (error) setError("No se pudo eliminar la venta.");
   }
+  async function updateVenta(id, patch) {
+    setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+    const { error } = await supabase.from("ventas").update(patch).eq("id", id);
+    if (error) {
+      setError("No se pudo actualizar la venta.");
+      fetchAll();
+    }
+  }
   async function updateFechaPago(id, fechaPago) {
     setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, fecha_pago: fechaPago } : v)));
     const { error } = await supabase.from("ventas").update({ fecha_pago: fechaPago || null }).eq("id", id);
@@ -254,7 +262,7 @@ export default function InventarioApp() {
           <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onUpdate={updateCompra} />
         )}
         {tab === "ventas" && (
-          <VentasTab ventas={ventas} onAdd={addVenta} onDelete={deleteVenta} onUpdateFechaPago={updateFechaPago} onUpdateFechaEntrega={updateFechaEntrega} onUpdateAbono={updateAbono} />
+          <VentasTab ventas={ventas} onAdd={addVenta} onDelete={deleteVenta} onUpdate={updateVenta} onUpdateFechaPago={updateFechaPago} onUpdateFechaEntrega={updateFechaEntrega} onUpdateAbono={updateAbono} />
         )}
         {tab === "balance" && (
           <BalanceTab ventas={ventas} compras={compras} pagosPendientes={pagosPendientes} onAdd={addPagoPendiente} onDelete={deletePagoPendiente} />
@@ -572,11 +580,11 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate }) {
 /* ---------------- VENTAS ---------------- */
 const VENTAS_FILTROS_VACIOS = { cliente: "", producto: "", fechaEntrega: "", fechaPago: "", soloConSaldo: false };
 
-function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEntrega, onUpdateAbono }) {
+function VentasTab({ ventas, onAdd, onDelete, onUpdate, onUpdateFechaPago, onUpdateFechaEntrega, onUpdateAbono }) {
   const [showForm, setShowForm] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState(VENTAS_FILTROS_VACIOS);
-  const [form, setForm] = useState({ nombreProducto: "", cantidad: "1", precioVenta: "", cliente: "", fechaEntrega: "", fechaPago: "", abono: "", metodoPago: "Efectivo" });
+  const [form, setForm] = useState({ nombreProducto: "", cantidad: "1", precioVenta: "", cliente: "", fechaEntrega: "", fechaPago: "", abono: "", metodoPago: METODO_PAGO_OPCIONES[0] });
 
   const totalAbonos = ventas.reduce((s, v) => s + Number(v.abono || 0), 0);
   const totalSaldo = ventas.reduce((s, v) => s + Number(v.saldo || 0), 0);
@@ -593,8 +601,14 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
       cliente: form.cliente.trim(), fechaEntrega: form.fechaEntrega, fechaPago: form.fechaPago, abono,
       saldo: Math.max(valorTotal - abono, 0), metodoPago: form.metodoPago,
     });
-    setForm({ nombreProducto: "", cantidad: "1", precioVenta: "", cliente: "", fechaEntrega: "", fechaPago: "", abono: "", metodoPago: "Efectivo" });
+    setForm({ nombreProducto: "", cantidad: "1", precioVenta: "", cliente: "", fechaEntrega: "", fechaPago: "", abono: "", metodoPago: METODO_PAGO_OPCIONES[0] });
     setShowForm(false);
+  }
+
+  function updateValorTotalVenta(v, nuevoTotal) {
+    const total = Number(nuevoTotal) || 0;
+    const saldo = Math.max(total - Number(v.abono || 0), 0);
+    onUpdate(v.id, { valor_total: total, saldo });
   }
 
   const filtrosActivos =
@@ -736,10 +750,18 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
             )}
             {sorted.map((v) => (
               <tr key={v.id}>
-                <td style={styles.td}><strong>{v.nombre_producto || "—"}</strong></td>
-                <td style={styles.td}>{v.cantidad}</td>
-                <td style={styles.tdMuted}>{v.cliente || "—"}</td>
-                <td style={styles.td}>{fmt(v.valor_total)}</td>
+                <td style={styles.td}>
+                  <TextCellInput value={v.nombre_producto} onSave={(nuevo) => onUpdate(v.id, { nombre_producto: nuevo })} width={140} />
+                </td>
+                <td style={styles.td}>
+                  <CantidadInput value={v.cantidad} onSave={(nueva) => onUpdate(v.id, { cantidad: nueva })} />
+                </td>
+                <td style={styles.td}>
+                  <TextCellInput value={v.cliente} onSave={(nuevo) => onUpdate(v.id, { cliente: nuevo })} width={130} />
+                </td>
+                <td style={styles.td}>
+                  <PrecioVentaInput value={v.valor_total} onSave={(nuevo) => updateValorTotalVenta(v, nuevo)} />
+                </td>
                 <td style={styles.td}>
                   <FechaPagoInput value={v.fecha_entrega} onSave={(nueva) => onUpdateFechaEntrega(v.id, nueva)} />
                 </td>
@@ -747,14 +769,12 @@ function VentasTab({ ventas, onAdd, onDelete, onUpdateFechaPago, onUpdateFechaEn
                   <FechaPagoInput value={v.fecha_pago} onSave={(nueva) => onUpdateFechaPago(v.id, nueva)} />
                 </td>
                 <td style={styles.td}>
-                  {Number(v.saldo) !== 0 ? (
-                    <PrecioVentaInput value={v.abono} onSave={(nuevo) => onUpdateAbono(v.id, nuevo)} />
-                  ) : (
-                    fmt(v.abono)
-                  )}
+                  <PrecioVentaInput value={v.abono} onSave={(nuevo) => onUpdateAbono(v.id, nuevo)} />
                 </td>
                 <td style={styles.td}><span style={{ ...styles.stockPill, ...(v.saldo > 0 ? styles.stockLow : {}) }}>{fmt(v.saldo)}</span></td>
-                <td style={styles.tdMuted}>{v.metodo_pago}</td>
+                <td style={styles.td}>
+                  <MetodoPagoSelect value={v.metodo_pago} onSave={(nuevo) => onUpdate(v.id, { metodo_pago: nuevo })} />
+                </td>
                 <td style={styles.td}><button style={styles.iconBtn} onClick={() => onDelete(v.id)} title="Eliminar venta"><Trash2 size={15} /></button></td>
               </tr>
             ))}
@@ -1297,6 +1317,15 @@ function TextCellInput({ value, onSave, width }) {
 }
 function QuienPagoSelect({ value, onSave }) {
   const opciones = value && !QUIEN_PAGO_OPCIONES.includes(value) ? [value, ...QUIEN_PAGO_OPCIONES] : QUIEN_PAGO_OPCIONES;
+  return (
+    <select style={{ ...styles.priceInput, width: 110 }} value={value || ""} onChange={(e) => onSave(e.target.value)}>
+      <option value="">—</option>
+      {opciones.map((o) => <option key={o} value={o}>{o}</option>)}
+    </select>
+  );
+}
+function MetodoPagoSelect({ value, onSave }) {
+  const opciones = value && !METODO_PAGO_OPCIONES.includes(value) ? [value, ...METODO_PAGO_OPCIONES] : METODO_PAGO_OPCIONES;
   return (
     <select style={{ ...styles.priceInput, width: 110 }} value={value || ""} onChange={(e) => onSave(e.target.value)}>
       <option value="">—</option>
