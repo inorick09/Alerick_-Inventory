@@ -811,13 +811,20 @@ function truncateToWidth(ctx, text, maxWidth) {
 }
 
 function exportVentasPNG(rows, resumen, filtrosActivos) {
+  const measureCanvas = document.createElement("canvas");
+  const mctx = measureCanvas.getContext("2d");
+  mctx.font = "bold 11px Arial";
+  let productoWidth = mctx.measureText("PRODUCTO").width + 16;
+  mctx.font = "12px Arial";
+  rows.forEach((v) => {
+    productoWidth = Math.max(productoWidth, mctx.measureText(v.nombre_producto || "—").width + 16);
+  });
+  productoWidth = Math.max(170, Math.ceil(productoWidth));
+
   const cols = [
-    { key: "producto", label: "Producto", width: 170 },
+    { key: "producto", label: "Producto", width: productoWidth },
     { key: "cantidad", label: "Cant.", width: 55 },
     { key: "cliente", label: "Cliente", width: 130 },
-    { key: "total", label: "Total", width: 100 },
-    { key: "fentrega", label: "F. entrega", width: 95 },
-    { key: "fpago", label: "F. pago", width: 95 },
     { key: "abono", label: "Abono", width: 100 },
     { key: "saldo", label: "Saldo", width: 100 },
     { key: "pago", label: "Pago", width: 90 },
@@ -826,7 +833,7 @@ function exportVentasPNG(rows, resumen, filtrosActivos) {
   const rowHeight = 30;
   const headerHeight = 34;
   const titleHeight = 62;
-  const footerHeight = 56;
+  const footerHeight = 34;
   const tableWidth = cols.reduce((s, c) => s + c.width, 0);
   const width = tableWidth + padding * 2;
   const bodyHeight = Math.max(rows.length, 1) * rowHeight;
@@ -880,9 +887,6 @@ function exportVentasPNG(rows, resumen, filtrosActivos) {
         v.nombre_producto || "—",
         String(v.cantidad ?? "—"),
         v.cliente || "—",
-        fmt(v.valor_total),
-        fmtDate(v.fecha_entrega),
-        fmtDate(v.fecha_pago),
         fmt(v.abono),
         fmt(v.saldo),
         v.metodo_pago || "—",
@@ -890,8 +894,8 @@ function exportVentasPNG(rows, resumen, filtrosActivos) {
       x = padding;
       ctx.font = "12px Arial";
       cols.forEach((c, ci) => {
-        ctx.fillStyle = ci === 7 && Number(v.saldo) > 0 ? "#A9791F" : "#3B2A33";
-        const text = truncateToWidth(ctx, values[ci], c.width - 16);
+        ctx.fillStyle = ci === 4 && Number(v.saldo) > 0 ? "#A9791F" : "#3B2A33";
+        const text = ci === 0 ? values[ci] : truncateToWidth(ctx, values[ci], c.width - 16);
         ctx.fillText(text, x + 8, y + 20);
         x += c.width;
       });
@@ -902,8 +906,7 @@ function exportVentasPNG(rows, resumen, filtrosActivos) {
   y += 18;
   ctx.fillStyle = "#D9678C";
   ctx.font = "bold 14px Arial";
-  ctx.fillText(`Total vendido: ${fmt(resumen.totalAbono)}`, padding, y);
-  ctx.fillText(`Saldo total: ${fmt(resumen.totalSaldo)}`, padding, y + 22);
+  ctx.fillText(`Saldo total: ${fmt(resumen.totalSaldo)}`, padding, y);
 
   canvas.toBlob((blob) => {
     if (!blob) return;
