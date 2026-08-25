@@ -824,7 +824,6 @@ function exportVentasPNG(rows, resumen, filtrosActivos) {
   const cols = [
     { key: "producto", label: "Producto", width: productoWidth },
     { key: "cantidad", label: "Cant.", width: 55 },
-    { key: "cliente", label: "Cliente", width: 130 },
     { key: "abono", label: "Abono", width: 100 },
     { key: "saldo", label: "Saldo", width: 100 },
     { key: "pago", label: "Pago", width: 90 },
@@ -886,7 +885,6 @@ function exportVentasPNG(rows, resumen, filtrosActivos) {
       const values = [
         v.nombre_producto || "—",
         String(v.cantidad ?? "—"),
-        v.cliente || "—",
         fmt(v.abono),
         fmt(v.saldo),
         v.metodo_pago || "—",
@@ -894,7 +892,7 @@ function exportVentasPNG(rows, resumen, filtrosActivos) {
       x = padding;
       ctx.font = "12px Arial";
       cols.forEach((c, ci) => {
-        ctx.fillStyle = ci === 4 && Number(v.saldo) > 0 ? "#A9791F" : "#3B2A33";
+        ctx.fillStyle = ci === 3 && Number(v.saldo) > 0 ? "#A9791F" : "#3B2A33";
         const text = ci === 0 ? values[ci] : truncateToWidth(ctx, values[ci], c.width - 16);
         ctx.fillText(text, x + 8, y + 20);
         x += c.width;
