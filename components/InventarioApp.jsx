@@ -300,14 +300,36 @@ function TabButton({ icon: Icon, label, active, onClick }) {
 }
 
 /* ---------------- INVENTARIO ---------------- */
+const INVENTARIO_PAGE_SIZE = 10;
+
 function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpdateCantidad, onUpdateUbicacion }) {
   const [query, setQuery] = useState("");
+  const [ubicacionFiltro, setUbicacionFiltro] = useState("");
+  const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ nombre: "", sku: "", categoria: CATEGORIAS[0], cantidad: "", precioVenta: "", costo: "", ubicacion: "" });
 
+  const hayFiltrosActivos = query.trim() !== "" || ubicacionFiltro !== "";
+
+  // Si el usuario cambia el texto de búsqueda o la ubicación, siempre volvemos
+  // a la primera página para no quedar "perdidos" en una página vacía.
+  useEffect(() => {
+    setPage(1);
+  }, [query, ubicacionFiltro]);
+
   const filtered = productos
     .filter((p) => p.nombre.toLowerCase().includes(query.toLowerCase()) || (p.sku || "").toLowerCase().includes(query.toLowerCase()))
+    .filter((p) => !ubicacionFiltro || (p["Ubicación"] || "").split(",").map((s) => s.trim()).includes(ubicacionFiltro))
     .sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+  // Sin filtros mostramos solo 10 a la vez (paginado) para no cargar la tabla
+  // completa; en cuanto haya una búsqueda o un filtro de ubicación activo,
+  // mostramos todos los resultados que coincidan, sin paginar.
+  const totalPaginas = Math.max(1, Math.ceil(filtered.length / INVENTARIO_PAGE_SIZE));
+  const paginaActual = Math.min(page, totalPaginas);
+  const visibles = hayFiltrosActivos
+    ? filtered
+    : filtered.slice((paginaActual - 1) * INVENTARIO_PAGE_SIZE, paginaActual * INVENTARIO_PAGE_SIZE);
 
   const totalUnidades = productos.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
   const valorInventario = productos.reduce((s, p) => s + (Number(p.cantidad) || 0) * (Number(p.costo) || 0), 0);
@@ -335,6 +357,10 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
           <Search size={15} color="#B89099" />
           <input style={styles.searchInput} placeholder="Buscar producto o SKU…" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
+        <select style={{ ...styles.input, width: 160 }} value={ubicacionFiltro} onChange={(e) => setUbicacionFiltro(e.target.value)}>
+          <option value="">Todas las ubicaciones</option>
+          {UBICACION_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
         <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Nuevo producto</button>
       </div>
 
@@ -385,10 +411,12 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && (
-              <tr><td colSpan={8} style={styles.emptyCell}>Aún no hay productos que coincidan. Agrega el primero arriba.</td></tr>
+            {visibles.length === 0 && (
+              <tr><td colSpan={8} style={styles.emptyCell}>
+                {filtered.length === 0 && productos.length > 0 ? "Ningún producto coincide con la búsqueda o la ubicación seleccionada." : "Aún no hay productos que coincidan. Agrega el primero arriba."}
+              </td></tr>
             )}
-            {filtered.map((p) => {
+            {visibles.map((p) => {
               const cantidad = Number(p.cantidad) || 0;
               return (
                 <tr key={p.id}>
@@ -414,6 +442,39 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
           </tbody>
         </table>
       </div>
+
+      {!hayFiltrosActivos && filtered.length > 0 && (
+        <div style={styles.paginationBar}>
+          <span style={styles.paginationInfo}>
+            Mostrando {(paginaActual - 1) * INVENTARIO_PAGE_SIZE + 1}
+            –{Math.min(paginaActual * INVENTARIO_PAGE_SIZE, filtered.length)} de {filtered.length} productos
+          </span>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              type="button"
+              style={{ ...styles.ghostBtn, opacity: paginaActual <= 1 ? 0.5 : 1 }}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={paginaActual <= 1}
+            >
+              Anterior
+            </button>
+            <span style={styles.paginationInfo}>Página {paginaActual} de {totalPaginas}</span>
+            <button
+              type="button"
+              style={{ ...styles.ghostBtn, opacity: paginaActual >= totalPaginas ? 0.5 : 1 }}
+              onClick={() => setPage((p) => Math.min(totalPaginas, p + 1))}
+              disabled={paginaActual >= totalPaginas}
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
+      )}
+      {hayFiltrosActivos && filtered.length > 0 && (
+        <div style={styles.paginationBar}>
+          <span style={styles.paginationInfo}>{filtered.length} producto{filtered.length === 1 ? "" : "s"} encontrado{filtered.length === 1 ? "" : "s"}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -1569,6 +1630,8 @@ const styles = {
   priceInputLow: { borderColor: "#E7CFA0", background: "#FCF1DC", color: "#A9791F" },
   inlineRow: { display: "flex", gap: 8, alignItems: "center" },
   tableWrap: { overflowX: "auto", border: "1px solid #EEDEE0", borderRadius: 12 },
+  paginationBar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, flexWrap: "wrap", gap: 10 },
+  paginationInfo: { color: "#8B6B76", fontSize: 12.5 },
   table: { width: "100%", borderCollapse: "collapse", fontSize: 13 },
   th: { textAlign: "left", padding: "10px 14px", background: "#FBF3F1", color: "#8B6B76", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3, fontWeight: 600, borderBottom: "1px solid #EEDEE0" },
   td: { padding: "10px 14px", borderBottom: "1px solid #F4E9E9", color: "#3B2A33" },
