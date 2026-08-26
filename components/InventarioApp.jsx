@@ -300,7 +300,7 @@ function TabButton({ icon: Icon, label, active, onClick }) {
 }
 
 /* ---------------- INVENTARIO ---------------- */
-const INVENTARIO_PAGE_SIZE = 10;
+const PAGE_SIZE = 10;
 
 function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpdateCantidad, onUpdateUbicacion }) {
   const [query, setQuery] = useState("");
@@ -325,11 +325,11 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
   // Sin filtros mostramos solo 10 a la vez (paginado) para no cargar la tabla
   // completa; en cuanto haya una búsqueda o un filtro de ubicación activo,
   // mostramos todos los resultados que coincidan, sin paginar.
-  const totalPaginas = Math.max(1, Math.ceil(filtered.length / INVENTARIO_PAGE_SIZE));
+  const totalPaginas = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginaActual = Math.min(page, totalPaginas);
   const visibles = hayFiltrosActivos
     ? filtered
-    : filtered.slice((paginaActual - 1) * INVENTARIO_PAGE_SIZE, paginaActual * INVENTARIO_PAGE_SIZE);
+    : filtered.slice((paginaActual - 1) * PAGE_SIZE, paginaActual * PAGE_SIZE);
 
   const totalUnidades = productos.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
   const valorInventario = productos.reduce((s, p) => s + (Number(p.cantidad) || 0) * (Number(p.costo) || 0), 0);
@@ -446,8 +446,8 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
       {!hayFiltrosActivos && filtered.length > 0 && (
         <div style={styles.paginationBar}>
           <span style={styles.paginationInfo}>
-            Mostrando {(paginaActual - 1) * INVENTARIO_PAGE_SIZE + 1}
-            –{Math.min(paginaActual * INVENTARIO_PAGE_SIZE, filtered.length)} de {filtered.length} productos
+            Mostrando {(paginaActual - 1) * PAGE_SIZE + 1}
+            –{Math.min(paginaActual * PAGE_SIZE, filtered.length)} de {filtered.length} productos
           </span>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <button
@@ -1167,6 +1167,7 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate }) {
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState(PORCOMPRAR_FILTROS_VACIOS);
   const [form, setForm] = useState({ producto: "", sku: "", tono: "", cantidad: "1", cliente: "", status: STATUS_OPCIONES[3] });
+  const [page, setPage] = useState(1);
 
   function submit(e) {
     e.preventDefault();
@@ -1181,6 +1182,11 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate }) {
 
   const filtrosActivos = filters.producto.trim() !== "" || filters.sku.trim() !== "" || filters.cliente.trim() !== "" || filters.status !== "";
 
+  // Al cambiar cualquier filtro, volvemos a la primera página.
+  useEffect(() => {
+    setPage(1);
+  }, [filters.producto, filters.sku, filters.cliente, filters.status]);
+
   const sorted = items.filter((pc) => {
     if (filters.producto.trim() && !(pc.producto || "").toLowerCase().includes(filters.producto.trim().toLowerCase())) return false;
     if (filters.sku.trim() && !(pc.sku || "").toLowerCase().includes(filters.sku.trim().toLowerCase())) return false;
@@ -1188,6 +1194,14 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate }) {
     if (filters.status && pc.status !== filters.status) return false;
     return true;
   });
+
+  // Sin filtros activos mostramos solo 10 registros a la vez (paginado); en
+  // cuanto se aplique cualquier filtro, mostramos todos los que coincidan.
+  const totalPaginas = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const paginaActual = Math.min(page, totalPaginas);
+  const visibles = filtrosActivos
+    ? sorted
+    : sorted.slice((paginaActual - 1) * PAGE_SIZE, paginaActual * PAGE_SIZE);
 
   const resumenMap = new Map();
   for (const pc of items) {
@@ -1318,8 +1332,8 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.length === 0 && <tr><td colSpan={7} style={styles.emptyCell}>{filtrosActivos ? "Ningún resultado coincide con los filtros." : "Aún no has registrado productos por comprar."}</td></tr>}
-            {sorted.map((pc) => (
+            {visibles.length === 0 && <tr><td colSpan={7} style={styles.emptyCell}>{filtrosActivos ? "Ningún resultado coincide con los filtros." : "Aún no has registrado productos por comprar."}</td></tr>}
+            {visibles.map((pc) => (
               <tr key={pc.id}>
                 <td style={styles.td}>
                   <TextCellInput value={pc.producto} onSave={(nuevo) => onUpdate(pc.id, { producto: nuevo })} width={160} />
@@ -1352,6 +1366,39 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate }) {
           </tbody>
         </table>
       </div>
+
+      {!filtrosActivos && sorted.length > 0 && (
+        <div style={styles.paginationBar}>
+          <span style={styles.paginationInfo}>
+            Mostrando {(paginaActual - 1) * PAGE_SIZE + 1}
+            –{Math.min(paginaActual * PAGE_SIZE, sorted.length)} de {sorted.length} registros
+          </span>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              type="button"
+              style={{ ...styles.ghostBtn, opacity: paginaActual <= 1 ? 0.5 : 1 }}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={paginaActual <= 1}
+            >
+              Anterior
+            </button>
+            <span style={styles.paginationInfo}>Página {paginaActual} de {totalPaginas}</span>
+            <button
+              type="button"
+              style={{ ...styles.ghostBtn, opacity: paginaActual >= totalPaginas ? 0.5 : 1 }}
+              onClick={() => setPage((p) => Math.min(totalPaginas, p + 1))}
+              disabled={paginaActual >= totalPaginas}
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
+      )}
+      {filtrosActivos && sorted.length > 0 && (
+        <div style={styles.paginationBar}>
+          <span style={styles.paginationInfo}>{sorted.length} registro{sorted.length === 1 ? "" : "s"} encontrado{sorted.length === 1 ? "" : "s"}</span>
+        </div>
+      )}
     </div>
   );
 }
