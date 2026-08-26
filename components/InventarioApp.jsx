@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle, SlidersHorizontal, Wallet, ClipboardList, Download } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
@@ -628,12 +628,63 @@ function VentasTab({ ventas, clientes, onAdd, onDelete, onUpdate, onUpdateFechaP
     return true;
   });
 
-  const sorted = filtrosActivos
-    ? filtered
-    : [...ventas].sort((a, b) => (b.fecha_pago || "").localeCompare(a.fecha_pago || "")).slice(0, 50);
+  const pendientesPorEntregar = [...ventas]
+    .filter((v) => !v.fecha_entrega)
+    .sort((a, b) => (a.cliente || "").localeCompare(b.cliente || "") || (b.fecha_pago || "").localeCompare(a.fecha_pago || ""));
+
+  const pendientesAgrupados = [];
+  {
+    const map = new Map();
+    for (const v of pendientesPorEntregar) {
+      const key = v.cliente || "Sin cliente";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(v);
+    }
+    for (const [cliente, itemsCliente] of map) pendientesAgrupados.push({ cliente, items: itemsCliente });
+  }
+
+  const sorted = filtrosActivos ? filtered : pendientesPorEntregar;
 
   const abonoFiltrado = filtered.reduce((s, v) => s + Number(v.abono || 0), 0);
   const saldoFiltrado = filtered.reduce((s, v) => s + Number(v.saldo || 0), 0);
+
+  function renderVentaRow(v) {
+    return (
+      <tr key={v.id}>
+        <td style={styles.td}>
+          <TextCellInput value={v.nombre_producto} onSave={(nuevo) => onUpdate(v.id, { nombre_producto: nuevo })} width={140} />
+        </td>
+        <td style={styles.td}>
+          <CantidadInput value={v.cantidad} onSave={(nueva) => onUpdate(v.id, { cantidad: nueva })} />
+        </td>
+        <td style={styles.td}>
+          <ClienteSelect
+            value={v.cliente}
+            clientes={clientes}
+            onChange={(nuevo) => onUpdate(v.id, { cliente: nuevo })}
+            width={140}
+          />
+        </td>
+        <td style={styles.td}>
+          <MoneyCellInput value={v.valor_total} onSave={(nuevo) => updateValorTotalVenta(v, nuevo)} />
+        </td>
+        <td style={styles.td}>
+          <FechaPagoInput value={v.fecha_entrega} onSave={(nueva) => onUpdateFechaEntrega(v.id, nueva)} />
+        </td>
+        <td style={styles.td}>
+          <FechaPagoInput value={v.fecha_pago} onSave={(nueva) => onUpdateFechaPago(v.id, nueva)} />
+        </td>
+        <td style={styles.td}>
+          <MoneyCellInput value={v.abono} onSave={(nuevo) => onUpdateAbono(v.id, nuevo)} />
+        </td>
+        <td style={styles.td}><span style={{ ...styles.stockPill, ...(v.saldo > 0 ? styles.stockLow : {}) }}>{fmt(v.saldo)}</span></td>
+        <td style={styles.td}>
+          <MetodoPagoSelect value={v.metodo_pago} onSave={(nuevo) => onUpdate(v.id, { metodo_pago: nuevo })} />
+        </td>
+        <td style={styles.td}><button style={styles.iconBtn} onClick={() => onDelete(v.id)} title="Eliminar venta"><Trash2 size={15} /></button></td>
+      </tr>
+    );
+  }
 
   return (
     <div>
@@ -669,9 +720,9 @@ function VentasTab({ ventas, clientes, onAdd, onDelete, onUpdate, onUpdateFechaP
         </button>
       </div>
 
-      {!filtrosActivos && ventas.length > 50 && (
+      {!filtrosActivos && (
         <p style={{ fontSize: 12.5, color: "#8B6B76", margin: "-6px 0 14px" }}>
-          Mostrando las 50 ventas más recientes por fecha de pago. Usa los filtros para ver el resto.
+          Mostrando productos pendientes por entregar (sin fecha de entrega), agrupados por cliente. Usa los filtros para ver el resto de las ventas.
         </p>
       )}
 
@@ -756,44 +807,24 @@ function VentasTab({ ventas, clientes, onAdd, onDelete, onUpdate, onUpdateFechaP
             </tr>
           </thead>
           <tbody>
-            {sorted.length === 0 && (
-              <tr><td colSpan={10} style={styles.emptyCell}>{filtrosActivos ? "Ningún resultado coincide con los filtros." : "Aún no has registrado ventas."}</td></tr>
+            {!filtrosActivos ? (
+              pendientesAgrupados.length === 0 ? (
+                <tr><td colSpan={10} style={styles.emptyCell}>No hay productos pendientes por entregar.</td></tr>
+              ) : (
+                pendientesAgrupados.map((g) => (
+                  <Fragment key={g.cliente}>
+                    <tr>
+                      <td colSpan={10} style={{ ...styles.td, fontWeight: 700, background: "#FBEFF2" }}>{g.cliente}</td>
+                    </tr>
+                    {g.items.map((v) => renderVentaRow(v))}
+                  </Fragment>
+                ))
+              )
+            ) : sorted.length === 0 ? (
+              <tr><td colSpan={10} style={styles.emptyCell}>Ningún resultado coincide con los filtros.</td></tr>
+            ) : (
+              sorted.map((v) => renderVentaRow(v))
             )}
-            {sorted.map((v) => (
-              <tr key={v.id}>
-                <td style={styles.td}>
-                  <TextCellInput value={v.nombre_producto} onSave={(nuevo) => onUpdate(v.id, { nombre_producto: nuevo })} width={140} />
-                </td>
-                <td style={styles.td}>
-                  <CantidadInput value={v.cantidad} onSave={(nueva) => onUpdate(v.id, { cantidad: nueva })} />
-                </td>
-                <td style={styles.td}>
-                  <ClienteSelect
-                    value={v.cliente}
-                    clientes={clientes}
-                    onChange={(nuevo) => onUpdate(v.id, { cliente: nuevo })}
-                    width={140}
-                  />
-                </td>
-                <td style={styles.td}>
-                  <MoneyCellInput value={v.valor_total} onSave={(nuevo) => updateValorTotalVenta(v, nuevo)} />
-                </td>
-                <td style={styles.td}>
-                  <FechaPagoInput value={v.fecha_entrega} onSave={(nueva) => onUpdateFechaEntrega(v.id, nueva)} />
-                </td>
-                <td style={styles.td}>
-                  <FechaPagoInput value={v.fecha_pago} onSave={(nueva) => onUpdateFechaPago(v.id, nueva)} />
-                </td>
-                <td style={styles.td}>
-                  <MoneyCellInput value={v.abono} onSave={(nuevo) => onUpdateAbono(v.id, nuevo)} />
-                </td>
-                <td style={styles.td}><span style={{ ...styles.stockPill, ...(v.saldo > 0 ? styles.stockLow : {}) }}>{fmt(v.saldo)}</span></td>
-                <td style={styles.td}>
-                  <MetodoPagoSelect value={v.metodo_pago} onSave={(nuevo) => onUpdate(v.id, { metodo_pago: nuevo })} />
-                </td>
-                <td style={styles.td}><button style={styles.iconBtn} onClick={() => onDelete(v.id)} title="Eliminar venta"><Trash2 size={15} /></button></td>
-              </tr>
-            ))}
           </tbody>
         </table>
       </div>
@@ -1013,7 +1044,7 @@ function BalanceTab({ ventas, compras, pagosPendientes, onAdd, onDelete }) {
   );
 }
 
-const PORCOMPRAR_FILTROS_VACIOS = { cliente: "", status: "" };
+const PORCOMPRAR_FILTROS_VACIOS = { producto: "", sku: "", cliente: "", status: "" };
 
 function exportResumenPDF(resumenAgrupado) {
   const rows = [];
@@ -1066,9 +1097,11 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate }) {
     setShowForm(false);
   }
 
-  const filtrosActivos = filters.cliente.trim() !== "" || filters.status !== "";
+  const filtrosActivos = filters.producto.trim() !== "" || filters.sku.trim() !== "" || filters.cliente.trim() !== "" || filters.status !== "";
 
   const sorted = items.filter((pc) => {
+    if (filters.producto.trim() && !(pc.producto || "").toLowerCase().includes(filters.producto.trim().toLowerCase())) return false;
+    if (filters.sku.trim() && !(pc.sku || "").toLowerCase().includes(filters.sku.trim().toLowerCase())) return false;
     if (filters.cliente.trim() && !(pc.cliente || "").toLowerCase().includes(filters.cliente.trim().toLowerCase())) return false;
     if (filters.status && pc.status !== filters.status) return false;
     return true;
@@ -1135,6 +1168,12 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate }) {
       {showFilters && (
         <div style={styles.card}>
           <div style={styles.formGrid}>
+            <Field label="Producto">
+              <input style={styles.input} value={filters.producto} onChange={(e) => setFilters({ ...filters, producto: e.target.value })} placeholder="Buscar por producto…" />
+            </Field>
+            <Field label="SKU">
+              <input style={styles.input} value={filters.sku} onChange={(e) => setFilters({ ...filters, sku: e.target.value })} placeholder="Buscar por SKU…" />
+            </Field>
             <Field label="Cliente">
               <input style={styles.input} value={filters.cliente} onChange={(e) => setFilters({ ...filters, cliente: e.target.value })} placeholder="Buscar por cliente…" />
             </Field>
