@@ -24,6 +24,8 @@ const CATEGORIAS = [
 
 const QUIEN_PAGO_OPCIONES = ["Erick", "Aleja", "Nequi"];
 
+const UBICACION_OPCIONES = ["Aleja", "Erik"];
+
 const STATUS_OPCIONES = ["Agotado", "Inventario Erik", "Inventario Aleja", "Por comprar", "Comprado"];
 
 const METODO_PAGO_OPCIONES = ["Nequi", "Daviplata", "Llave", "Pendiente", "Nequi Erik"];
@@ -103,6 +105,7 @@ export default function InventarioApp() {
   async function addProducto(p) {
     const { error } = await supabase.from("productos").insert({
       nombre: p.nombre, sku: p.sku, categoria: p.categoria, cantidad: p.cantidad, precio_venta: p.precioVenta, costo: p.costo,
+      "Ubicación": p.ubicacion || null,
     });
     if (error) setError("No se pudo guardar el producto.");
     else fetchAll();
@@ -124,6 +127,14 @@ export default function InventarioApp() {
     const { error } = await supabase.from("productos").update({ cantidad }).eq("id", id);
     if (error) {
       setError("No se pudo actualizar la cantidad.");
+      fetchAll();
+    }
+  }
+  async function updateUbicacion(id, ubicacion) {
+    setProductos((prev) => prev.map((p) => (p.id === id ? { ...p, "Ubicación": ubicacion } : p)));
+    const { error } = await supabase.from("productos").update({ "Ubicación": ubicacion }).eq("id", id);
+    if (error) {
+      setError("No se pudo actualizar la ubicación.");
       fetchAll();
     }
   }
@@ -261,7 +272,7 @@ export default function InventarioApp() {
 
       <main style={styles.main}>
         {tab === "inventario" && (
-          <InventarioTab productos={productos} onAdd={addProducto} onDelete={deleteProducto} onUpdatePrecioVenta={updatePrecioVenta} onUpdateCantidad={updateCantidad} />
+          <InventarioTab productos={productos} onAdd={addProducto} onDelete={deleteProducto} onUpdatePrecioVenta={updatePrecioVenta} onUpdateCantidad={updateCantidad} onUpdateUbicacion={updateUbicacion} />
         )}
         {tab === "compras" && (
           <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onUpdate={updateCompra} />
@@ -289,10 +300,10 @@ function TabButton({ icon: Icon, label, active, onClick }) {
 }
 
 /* ---------------- INVENTARIO ---------------- */
-function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpdateCantidad }) {
+function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpdateCantidad, onUpdateUbicacion }) {
   const [query, setQuery] = useState("");
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ nombre: "", sku: "", categoria: CATEGORIAS[0], cantidad: "", precioVenta: "", costo: "" });
+  const [form, setForm] = useState({ nombre: "", sku: "", categoria: CATEGORIAS[0], cantidad: "", precioVenta: "", costo: "", ubicacion: "" });
 
   const filtered = productos
     .filter((p) => p.nombre.toLowerCase().includes(query.toLowerCase()) || (p.sku || "").toLowerCase().includes(query.toLowerCase()))
@@ -305,8 +316,8 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
   function submit(e) {
     e.preventDefault();
     if (!form.nombre.trim()) return;
-    onAdd({ nombre: form.nombre.trim(), sku: form.sku.trim(), categoria: form.categoria, cantidad: Number(form.cantidad) || 0, precioVenta: Number(form.precioVenta) || 0, costo: Number(form.costo) || 0 });
-    setForm({ nombre: "", sku: "", categoria: CATEGORIAS[0], cantidad: "", precioVenta: "", costo: "" });
+    onAdd({ nombre: form.nombre.trim(), sku: form.sku.trim(), categoria: form.categoria, cantidad: Number(form.cantidad) || 0, precioVenta: Number(form.precioVenta) || 0, costo: Number(form.costo) || 0, ubicacion: form.ubicacion });
+    setForm({ nombre: "", sku: "", categoria: CATEGORIAS[0], cantidad: "", precioVenta: "", costo: "", ubicacion: "" });
     setShowForm(false);
   }
 
@@ -350,6 +361,12 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
             <Field label="Precio venta cada uno *">
               <input type="number" min="0" style={styles.input} value={form.precioVenta} onChange={(e) => setForm({ ...form, precioVenta: e.target.value })} required />
             </Field>
+            <Field label="Ubicación">
+              <select style={styles.input} value={form.ubicacion} onChange={(e) => setForm({ ...form, ubicacion: e.target.value })}>
+                <option value="">Selecciona…</option>
+                {UBICACION_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </Field>
           </div>
           <div style={styles.formActions}>
             <button type="button" style={styles.ghostBtn} onClick={() => setShowForm(false)}>Cancelar</button>
@@ -363,12 +380,13 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
           <thead>
             <tr>
               <th style={styles.th}>Producto</th><th style={styles.th}>SKU</th><th style={styles.th}>Categoría</th>
-              <th style={styles.th}>Cantidad</th><th style={styles.th}>Costo</th><th style={styles.th}>Precio venta cada uno</th><th style={styles.th}></th>
+              <th style={styles.th}>Cantidad</th><th style={styles.th}>Costo</th><th style={styles.th}>Precio venta cada uno</th>
+              <th style={styles.th}>Ubicación</th><th style={styles.th}></th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={7} style={styles.emptyCell}>Aún no hay productos que coincidan. Agrega el primero arriba.</td></tr>
+              <tr><td colSpan={8} style={styles.emptyCell}>Aún no hay productos que coincidan. Agrega el primero arriba.</td></tr>
             )}
             {filtered.map((p) => {
               const cantidad = Number(p.cantidad) || 0;
@@ -383,6 +401,9 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
                   <td style={styles.td}>{fmt(p.costo)}</td>
                   <td style={styles.td}>
                     <PrecioVentaInput value={p.precio_venta} onSave={(nuevo) => onUpdatePrecioVenta(p.id, nuevo)} />
+                  </td>
+                  <td style={styles.td}>
+                    <UbicacionSelect value={p["Ubicación"]} onSave={(nuevo) => onUpdateUbicacion(p.id, nuevo)} />
                   </td>
                   <td style={styles.td}>
                     <button style={styles.iconBtn} onClick={() => onDelete(p.id)} title="Eliminar producto"><Trash2 size={15} /></button>
@@ -1423,6 +1444,19 @@ function QuienPagoSelect({ value, onSave }) {
 }
 function MetodoPagoSelect({ value, onSave }) {
   const opciones = value && !METODO_PAGO_OPCIONES.includes(value) ? [value, ...METODO_PAGO_OPCIONES] : METODO_PAGO_OPCIONES;
+  return (
+    <select style={{ ...styles.priceInput, width: 110 }} value={value || ""} onChange={(e) => onSave(e.target.value)}>
+      <option value="">—</option>
+      {opciones.map((o) => <option key={o} value={o}>{o}</option>)}
+    </select>
+  );
+}
+// Lista desplegable para la ubicación del producto (Aleja / Erik). Si el valor
+// actual no coincide con ninguna opción (p. ej. viene con ambas ubicaciones
+// combinadas como "Aleja, Erik" de una importación anterior), se agrega igual
+// como opción para no perder el dato hasta que se elija una de las dos.
+function UbicacionSelect({ value, onSave }) {
+  const opciones = value && !UBICACION_OPCIONES.includes(value) ? [value, ...UBICACION_OPCIONES] : UBICACION_OPCIONES;
   return (
     <select style={{ ...styles.priceInput, width: 110 }} value={value || ""} onChange={(e) => onSave(e.target.value)}>
       <option value="">—</option>
