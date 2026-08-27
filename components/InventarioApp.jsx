@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, Fragment } from "react";
-import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle, SlidersHorizontal, Wallet, ClipboardList, Download } from "lucide-react";
+import { useState, useEffect, useCallback, useRef, Fragment } from "react";
+import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle, AlertTriangle, SlidersHorizontal, Wallet, ClipboardList, Download, Upload, Loader2, X } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const fmt = (n) =>
@@ -146,6 +146,20 @@ export default function InventarioApp() {
     if (error) setError("No se pudo guardar la compra.");
     else fetchAll();
   }
+  // Inserta en un solo lote todas las líneas de una factura ya parseada (ver
+  // ImportarFacturaPanel más abajo). No toca la tabla "productos": igual que al
+  // registrar una compra manual, la existencia y el stock del catálogo se siguen
+  // gestionando aparte en la pestaña Inventario.
+  async function importCompras(filas) {
+    if (!filas || filas.length === 0) return { ok: false, error: "Sin filas para importar." };
+    const { error } = await supabase.from("compras").insert(filas);
+    if (error) {
+      setError("No se pudieron importar las compras de la factura.");
+      return { ok: false, error };
+    }
+    await fetchAll();
+    return { ok: true };
+  }
   async function deleteCompra(id) {
     const { error } = await supabase.from("compras").delete().eq("id", id);
     if (error) setError("No se pudo eliminar la compra.");
@@ -275,7 +289,7 @@ export default function InventarioApp() {
           <InventarioTab productos={productos} onAdd={addProducto} onDelete={deleteProducto} onUpdatePrecioVenta={updatePrecioVenta} onUpdateCantidad={updateCantidad} onUpdateUbicacion={updateUbicacion} />
         )}
         {tab === "compras" && (
-          <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onUpdate={updateCompra} />
+          <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onUpdate={updateCompra} onImportMany={importCompras} />
         )}
         {tab === "ventas" && (
           <VentasTab ventas={ventas} clientes={clientes} onAdd={addVenta} onDelete={deleteVenta} onUpdate={updateVenta} onUpdateFechaPago={updateFechaPago} onUpdateFechaEntrega={updateFechaEntrega} onUpdateAbono={updateAbono} />
@@ -480,10 +494,87 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
 }
 
 /* ---------------- COMPRAS ---------------- */
-function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate }) {
+function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate, onImportMany }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ nombreProducto: "", sku: "", cantidad: "1", valorUnitario: "", fecha: today(), quienPago: "", factura: "" });
   const [facturaFiltro, setFacturaFiltro] = useState("");
+
+  // ---- Importar factura en PDF ----
+  const fileInputRef = useRef(null);
+  const [cargandoPdf, setCargandoPdf] = useState(false);
+  const [errorPdf, setErrorPdf] = useState("");
+  const [previewFactura, setPreviewFactura] = useState(null); // { factura, fecha, proveedor, quienPago, totalFactura, sumaItems, advertencias, items: [...] }
+  const [importando, setImportando] = useState(false);
+
+  async function handleFacturaFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // permite volver a elegir el mismo archivo si hace falta reintentar
+    if (!file) return;
+    setErrorPdf("");
+    setCargandoPdf(true);
+    try {
+      const fd = new FormData();
+      fd.append("factura", file);
+      const res = await fetch("/api/parse-factura", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "No se pudo procesar la factura.");
+      setPreviewFactura({
+        factura: data.factura || "",
+        fecha: data.fecha || today(),
+        proveedor: data.proveedor || "",
+        quienPago: "",
+        totalFactura: data.totalFactura,
+        sumaItems: data.sumaItems,
+        advertencias: data.advertencias || [],
+        items: (data.items || []).map((it, i) => ({ ...it, _id: i, incluir: true })),
+      });
+    } catch (err) {
+      setErrorPdf(err.message || "No se pudo leer el PDF.");
+    } finally {
+      setCargandoPdf(false);
+    }
+  }
+
+  function actualizarItemPreview(id, patch) {
+    setPreviewFactura((prev) => ({
+      ...prev,
+      items: prev.items.map((it) => (it._id === id ? { ...it, ...patch } : it)),
+    }));
+  }
+  function eliminarItemPreview(id) {
+    setPreviewFactura((prev) => ({ ...prev, items: prev.items.filter((it) => it._id !== id) }));
+  }
+  function cancelarImportacion() {
+    setPreviewFactura(null);
+    setErrorPdf("");
+  }
+
+  const facturaYaExiste = previewFactura && compras.some((c) => (c.factura || "").trim() === previewFactura.factura.trim() && previewFactura.factura.trim() !== "");
+
+  async function confirmarImportacion() {
+    if (!previewFactura.quienPago) return;
+    const incluidos = previewFactura.items.filter((it) => it.incluir);
+    if (incluidos.length === 0) return;
+    setImportando(true);
+    const filas = incluidos.map((it) => {
+      const cantidad = Number(it.cantidad) || 0;
+      const valorUnitario = Number(it.valorUnitario) || 0;
+      return {
+        producto_id: null,
+        nombre_producto: it.descripcion,
+        sku: it.sku,
+        cantidad,
+        valor_unitario: valorUnitario,
+        valor_total: cantidad * valorUnitario,
+        fecha: previewFactura.fecha,
+        quien_pago: previewFactura.quienPago,
+        factura: previewFactura.factura.trim(),
+      };
+    });
+    const resultado = await onImportMany(filas);
+    setImportando(false);
+    if (resultado?.ok) setPreviewFactura(null);
+  }
 
   const totalCompras = compras.reduce((s, c) => s + Number(c.valor_total || 0), 0);
 
@@ -542,8 +633,133 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate }) {
 
       <div style={styles.toolbar}>
         <div />
-        <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar compra</button>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf"
+            style={{ display: "none" }}
+            onChange={handleFacturaFile}
+          />
+          <button
+            style={styles.ghostBtn}
+            disabled={cargandoPdf}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {cargandoPdf ? <Loader2 size={16} /> : <Upload size={16} />}
+            {cargandoPdf ? "Leyendo factura…" : "Importar factura (PDF)"}
+          </button>
+          <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar compra</button>
+        </div>
       </div>
+
+      {errorPdf && (
+        <div style={{ ...styles.errorBanner, margin: "0 0 16px" }}>
+          <AlertCircle size={16} /><span>{errorPdf}</span>
+        </div>
+      )}
+
+      {previewFactura && (
+        <div style={styles.card}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <h3 style={{ ...styles.sectionTitle, margin: 0 }}>
+              Revisar factura importada{previewFactura.proveedor ? ` · ${previewFactura.proveedor}` : ""}
+            </h3>
+            <button style={styles.iconBtn} onClick={cancelarImportacion} title="Cancelar importación"><X size={18} /></button>
+          </div>
+
+          {previewFactura.advertencias.length > 0 && (
+            <div style={{ ...styles.errorBanner, alignItems: "flex-start", flexDirection: "column", gap: 4, marginBottom: 14 }}>
+              {previewFactura.advertencias.map((a, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                  <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} /><span>{a}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {facturaYaExiste && (
+            <div style={{ ...styles.errorBanner, marginBottom: 14 }}>
+              <AlertTriangle size={16} />
+              <span>Ya existen compras registradas con la factura "{previewFactura.factura}". Si continúas, se agregarán líneas adicionales (no se borran las existentes).</span>
+            </div>
+          )}
+
+          <div style={styles.formGrid}>
+            <Field label="N.º de factura *">
+              <input style={styles.input} value={previewFactura.factura} onChange={(e) => setPreviewFactura({ ...previewFactura, factura: e.target.value })} required />
+            </Field>
+            <Field label="Fecha de compra *">
+              <input type="date" style={styles.input} value={previewFactura.fecha} onChange={(e) => setPreviewFactura({ ...previewFactura, fecha: e.target.value })} required />
+            </Field>
+            <Field label="Quién pagó *">
+              <select style={styles.input} value={previewFactura.quienPago} onChange={(e) => setPreviewFactura({ ...previewFactura, quienPago: e.target.value })} required>
+                <option value="">Selecciona…</option>
+                {QUIEN_PAGO_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </Field>
+          </div>
+
+          <div style={{ ...styles.tableWrap, marginTop: 16 }}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}></th>
+                  <th style={styles.th}>Producto</th>
+                  <th style={styles.th}>SKU</th>
+                  <th style={styles.th}>Cant.</th>
+                  <th style={styles.th}>Valor unit.</th>
+                  <th style={styles.th}>Total</th>
+                  <th style={styles.th}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {previewFactura.items.length === 0 && (
+                  <tr><td colSpan={7} style={styles.emptyCell}>No se detectaron productos en el PDF.</td></tr>
+                )}
+                {previewFactura.items.map((it) => (
+                  <tr key={it._id} style={!it.incluir ? { opacity: 0.45 } : undefined}>
+                    <td style={styles.td}>
+                      <input type="checkbox" checked={it.incluir} onChange={(e) => actualizarItemPreview(it._id, { incluir: e.target.checked })} />
+                    </td>
+                    <td style={styles.td}>
+                      <input style={{ ...styles.input, minWidth: 200 }} value={it.descripcion} onChange={(e) => actualizarItemPreview(it._id, { descripcion: e.target.value })} />
+                    </td>
+                    <td style={styles.td}>
+                      <input style={{ ...styles.input, width: 100 }} value={it.sku} onChange={(e) => actualizarItemPreview(it._id, { sku: e.target.value })} />
+                    </td>
+                    <td style={styles.td}>
+                      <input type="number" min="0" style={{ ...styles.input, width: 70 }} value={it.cantidad} onChange={(e) => actualizarItemPreview(it._id, { cantidad: e.target.value })} />
+                    </td>
+                    <td style={styles.td}>
+                      <input type="number" min="0" style={{ ...styles.input, width: 100 }} value={it.valorUnitario} onChange={(e) => actualizarItemPreview(it._id, { valorUnitario: e.target.value })} />
+                    </td>
+                    <td style={styles.td}>{fmt((Number(it.cantidad) || 0) * (Number(it.valorUnitario) || 0))}</td>
+                    <td style={styles.td}>
+                      <button style={styles.iconBtn} onClick={() => eliminarItemPreview(it._id)} title="Quitar línea"><Trash2 size={15} /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={styles.formActions}>
+            <span style={{ ...styles.paginationInfo, marginRight: "auto" }}>
+              {previewFactura.items.filter((it) => it.incluir).length} de {previewFactura.items.length} productos seleccionados
+              {" · "}Total: {fmt(previewFactura.items.filter((it) => it.incluir).reduce((s, it) => s + (Number(it.cantidad) || 0) * (Number(it.valorUnitario) || 0), 0))}
+            </span>
+            <button type="button" style={styles.ghostBtn} onClick={cancelarImportacion}>Cancelar</button>
+            <button
+              type="button"
+              style={styles.primaryBtn}
+              disabled={importando || !previewFactura.quienPago || !previewFactura.factura.trim() || previewFactura.items.filter((it) => it.incluir).length === 0}
+              onClick={confirmarImportacion}
+            >
+              {importando ? "Importando…" : `Importar ${previewFactura.items.filter((it) => it.incluir).length} compras`}
+            </button>
+          </div>
+        </div>
+      )}
 
       {showForm && (
         <form onSubmit={submit} style={styles.card}>

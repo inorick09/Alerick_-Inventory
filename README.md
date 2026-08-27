@@ -24,3 +24,18 @@ manualmente en el panel de Supabase — no hay pantalla de registro público.
 5. Entra a la app con cualquiera de esos dos correos y su contraseña.
 
 Instrucciones detalladas paso a paso en la conversación de Claude donde se generó este proyecto.
+
+## Importar facturas en PDF (pestaña Compras)
+
+En la pestaña **Compras** hay un botón **"Importar factura (PDF)"**: al subir el PDF de una factura de
+compra (formato POS tipo TRENDY SHOP), la app lee automáticamente cada producto, SKU, cantidad, valor
+unitario, la fecha y el número de factura, y muestra una vista previa editable antes de guardar nada.
+Ahí puedes corregir cualquier dato, quitar líneas, elegir quién pagó y confirmar para registrar todas
+las compras de esa factura de una sola vez (en vez de escribirlas una por una).
+
+Si la factura tiene un formato distinto y no logra leer los productos, siempre puedes seguir
+registrando la compra manualmente con el botón "Registrar compra".
+
+Esta función usa una dependencia nueva (`unpdf`, para leer PDFs). Si trabajas en tu computador con
+`npm run dev`, corre `npm install` una vez después de actualizar estos archivos. En Vercel no hay que
+hacer nada aparte: se instala sola al desplegar.
