@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
-import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle, AlertTriangle, SlidersHorizontal, Wallet, ClipboardList, Download, Upload, Loader2, X } from "lucide-react";
+import { Package, ShoppingCart, TrendingUp, Plus, Trash2, Search, Sparkles, AlertCircle, AlertTriangle, SlidersHorizontal, Wallet, ClipboardList, Download, Upload, Loader2, X, Undo2 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const fmt = (n) =>
@@ -57,6 +57,59 @@ export default function InventarioApp() {
   const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Historial de cambios por sección, para el botón "Revertir cambios" de
+  // cada pestaña. Cada entrada guarda lo mínimo necesario para deshacer esa
+  // operación puntual (el id insertado, el estado anterior a un update, o la
+  // fila completa borrada). "ventas" agrupa tanto la tabla ventas como
+  // abonos_venta, ya que ambas se editan desde la pestaña Ventas.
+  const [historial, setHistorial] = useState({
+    productos: [], compras: [], ventas: [], pagosPendientes: [], porComprar: [],
+  });
+  const HISTORIAL_MAX = 20;
+
+  function pushHistorial(seccion, entry) {
+    setHistorial((prev) => ({ ...prev, [seccion]: [...prev[seccion], entry].slice(-HISTORIAL_MAX) }));
+  }
+
+  function omitId(row) {
+    const { id, ...rest } = row;
+    return rest;
+  }
+
+  async function aplicarReversion(entry) {
+    const { tabla, tipo } = entry;
+    if (tipo === "insert") {
+      const { error } = await supabase.from(tabla).delete().in("id", entry.ids);
+      if (error) return false;
+    } else if (tipo === "update") {
+      const { error } = await supabase.from(tabla).update(entry.previous).eq("id", entry.id);
+      if (error) return false;
+    } else if (tipo === "delete") {
+      const { error } = await supabase.from(tabla).insert(entry.rows);
+      if (error) return false;
+    } else if (tipo === "delete_con_abonos") {
+      const { error } = await supabase.from("ventas").insert(entry.rows);
+      if (error) return false;
+      if (entry.abonos && entry.abonos.length > 0) {
+        const { error: abonoError } = await supabase.from("abonos_venta").insert(entry.abonos);
+        if (abonoError) return false;
+      }
+    }
+    return true;
+  }
+
+  async function revertirSeccion(seccion) {
+    const stack = historial[seccion] || [];
+    if (stack.length === 0) return;
+    const entry = stack[stack.length - 1];
+    setHistorial((prev) => ({ ...prev, [seccion]: prev[seccion].slice(0, -1) }));
+    const ok = await aplicarReversion(entry);
+    if (!ok) {
+      setError("No se pudo revertir el último cambio.");
+      setHistorial((prev) => ({ ...prev, [seccion]: [...prev[seccion], entry] }));
+    }
+    await fetchAll();
+  }
 
   const fetchAll = useCallback(async () => {
     const [p, c, v, ab, pp, pc, cl] = await Promise.all([
@@ -102,32 +155,43 @@ export default function InventarioApp() {
   }, [fetchAll]);
 
   async function addProducto(p) {
-    const { error } = await supabase.from("productos").insert({
+    const { data, error } = await supabase.from("productos").insert({
       nombre: p.nombre, sku: p.sku, cantidad: p.cantidad, costo: p.costo,
       "Ubicación": p.ubicacion || null,
-    });
+    }).select().single();
     if (error) setError("No se pudo guardar el producto.");
-    else fetchAll();
+    else {
+      fetchAll();
+      pushHistorial("productos", { tabla: "productos", tipo: "insert", ids: [data.id] });
+    }
   }
   async function deleteProducto(id) {
+    const row = productos.find((p) => p.id === id);
     const { error } = await supabase.from("productos").delete().eq("id", id);
     if (error) setError("No se pudo eliminar el producto.");
+    else if (row) pushHistorial("productos", { tabla: "productos", tipo: "delete", rows: [row] });
   }
   async function updateProducto(id, patch) {
+    const previous = productos.find((p) => p.id === id);
     setProductos((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
     const { error } = await supabase.from("productos").update(patch).eq("id", id);
     if (error) {
       setError("No se pudo actualizar el producto.");
       fetchAll();
+    } else if (previous) {
+      pushHistorial("productos", { tabla: "productos", tipo: "update", id, previous: omitId(previous) });
     }
   }
   async function addCompra(c) {
-    const { error } = await supabase.from("compras").insert({
+    const { data, error } = await supabase.from("compras").insert({
       producto_id: c.productoId, nombre_producto: c.nombreProducto, sku: c.sku, cantidad: c.cantidad, valor_unitario: c.valorUnitario,
       valor_total: c.valorTotal, fecha: c.fecha, quien_pago: c.quienPago, factura: c.factura,
-    });
+    }).select().single();
     if (error) setError("No se pudo guardar la compra.");
-    else fetchAll();
+    else {
+      fetchAll();
+      pushHistorial("compras", { tabla: "compras", tipo: "insert", ids: [data.id] });
+    }
   }
   // Inserta en un solo lote todas las líneas de una factura ya parseada (ver
   // ImportarFacturaPanel más abajo). No toca la tabla "productos": igual que al
@@ -135,24 +199,32 @@ export default function InventarioApp() {
   // gestionando aparte en la pestaña Inventario.
   async function importCompras(filas) {
     if (!filas || filas.length === 0) return { ok: false, error: "Sin filas para importar." };
-    const { error } = await supabase.from("compras").insert(filas);
+    const { data, error } = await supabase.from("compras").insert(filas).select();
     if (error) {
       setError("No se pudieron importar las compras de la factura.");
       return { ok: false, error };
     }
     await fetchAll();
+    if (data && data.length > 0) {
+      pushHistorial("compras", { tabla: "compras", tipo: "insert", ids: data.map((r) => r.id) });
+    }
     return { ok: true };
   }
   async function deleteCompra(id) {
+    const row = compras.find((c) => c.id === id);
     const { error } = await supabase.from("compras").delete().eq("id", id);
     if (error) setError("No se pudo eliminar la compra.");
+    else if (row) pushHistorial("compras", { tabla: "compras", tipo: "delete", rows: [row] });
   }
   async function updateCompra(id, patch) {
+    const previous = compras.find((c) => c.id === id);
     setCompras((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
     const { error } = await supabase.from("compras").update(patch).eq("id", id);
     if (error) {
       setError("No se pudo actualizar la compra.");
       fetchAll();
+    } else if (previous) {
+      pushHistorial("compras", { tabla: "compras", tipo: "update", id, previous: omitId(previous) });
     }
   }
   // abono/saldo/fecha_pago de una venta ya no se escriben directamente: se
@@ -173,14 +245,16 @@ export default function InventarioApp() {
       setError("No se pudo guardar la venta.");
       return;
     }
+    pushHistorial("ventas", { tabla: "ventas", tipo: "insert", ids: [data.id] });
     if (Number(v.abono) > 0) {
-      const { error: abonoError } = await supabase.from("abonos_venta").insert({
+      const { data: abonoData, error: abonoError } = await supabase.from("abonos_venta").insert({
         venta_id: data.id,
         fecha: v.fechaPago || v.fechaEntrega || today(),
         monto: Number(v.abono),
         metodo_pago: v.metodoPago,
-      });
+      }).select().single();
       if (abonoError) setError("La venta se guardó, pero no se pudo registrar el abono inicial.");
+      else pushHistorial("ventas", { tabla: "abonos_venta", tipo: "insert", ids: [abonoData.id] });
     }
     fetchAll();
   }
@@ -203,75 +277,111 @@ export default function InventarioApp() {
     await updateProducto(producto.id, { cantidad: restante });
   }
   async function deleteVenta(id) {
+    const row = ventas.find((v) => v.id === id);
+    const abonosRelacionados = abonos.filter((a) => a.venta_id === id);
     const { error } = await supabase.from("ventas").delete().eq("id", id);
     if (error) setError("No se pudo eliminar la venta.");
+    else if (row) {
+      // El delete de la venta borra en cascada sus abonos_venta, así que hay
+      // que guardarlos aparte para poder restaurarlos si se revierte.
+      pushHistorial("ventas", { tabla: "ventas", tipo: "delete_con_abonos", rows: [row], abonos: abonosRelacionados });
+    }
   }
   async function updateVenta(id, patch) {
+    const previous = ventas.find((v) => v.id === id);
     setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)));
     const { error } = await supabase.from("ventas").update(patch).eq("id", id);
     if (error) {
       setError("No se pudo actualizar la venta.");
       fetchAll();
+    } else if (previous) {
+      pushHistorial("ventas", { tabla: "ventas", tipo: "update", id, previous: omitId(previous) });
     }
   }
   async function updateFechaEntrega(id, fechaEntrega) {
+    const previous = ventas.find((v) => v.id === id);
     setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, fecha_entrega: fechaEntrega || null } : v)));
     const { error } = await supabase.from("ventas").update({ fecha_entrega: fechaEntrega || null }).eq("id", id);
     if (error) {
       setError("No se pudo actualizar la fecha de entrega.");
       fetchAll();
+    } else if (previous) {
+      pushHistorial("ventas", { tabla: "ventas", tipo: "update", id, previous: omitId(previous) });
     }
   }
   // Historial de abonos por venta (una clienta puede abonar en varias
   // fechas). Cada insert/update/delete aquí hace que el trigger de Supabase
   // recalcule abono/saldo/fecha_pago de la venta correspondiente.
   async function addAbono(ventaId, { fecha, monto, metodoPago }) {
-    const { error } = await supabase.from("abonos_venta").insert({
+    const { data, error } = await supabase.from("abonos_venta").insert({
       venta_id: ventaId, fecha: fecha || today(), monto: Number(monto) || 0, metodo_pago: metodoPago || null,
-    });
+    }).select().single();
     if (error) setError("No se pudo registrar el abono.");
-    else fetchAll();
+    else {
+      fetchAll();
+      pushHistorial("ventas", { tabla: "abonos_venta", tipo: "insert", ids: [data.id] });
+    }
   }
   async function updateAbonoEntry(id, patch) {
+    const previous = abonos.find((a) => a.id === id);
     const { error } = await supabase.from("abonos_venta").update(patch).eq("id", id);
     if (error) {
       setError("No se pudo actualizar el abono.");
+    } else if (previous) {
+      pushHistorial("ventas", { tabla: "abonos_venta", tipo: "update", id, previous: omitId(previous) });
     }
     fetchAll();
   }
   async function deleteAbonoEntry(id) {
+    const row = abonos.find((a) => a.id === id);
     const { error } = await supabase.from("abonos_venta").delete().eq("id", id);
     if (error) setError("No se pudo eliminar el abono.");
-    else fetchAll();
+    else {
+      fetchAll();
+      if (row) pushHistorial("ventas", { tabla: "abonos_venta", tipo: "delete", rows: [row] });
+    }
   }
   async function addPagoPendiente(pp) {
-    const { error } = await supabase.from("pagos_pendientes").insert({
+    const { data, error } = await supabase.from("pagos_pendientes").insert({
       nombre: pp.nombre, monto: pp.monto, factura: pp.factura, fecha: pp.fecha,
-    });
+    }).select().single();
     if (error) setError("No se pudo guardar el pago pendiente.");
-    else fetchAll();
+    else {
+      fetchAll();
+      pushHistorial("pagosPendientes", { tabla: "pagos_pendientes", tipo: "insert", ids: [data.id] });
+    }
   }
   async function deletePagoPendiente(id) {
+    const row = pagosPendientes.find((p) => p.id === id);
     const { error } = await supabase.from("pagos_pendientes").delete().eq("id", id);
     if (error) setError("No se pudo eliminar el pago pendiente.");
+    else if (row) pushHistorial("pagosPendientes", { tabla: "pagos_pendientes", tipo: "delete", rows: [row] });
   }
   async function addPorComprar(pc) {
-    const { error } = await supabase.from("por_comprar").insert({
+    const { data, error } = await supabase.from("por_comprar").insert({
       producto: pc.producto, sku: pc.sku, tono: pc.tono, cantidad: pc.cantidad, cliente: pc.cliente, status: pc.status,
-    });
+    }).select().single();
     if (error) setError("No se pudo guardar el registro de por comprar.");
-    else fetchAll();
+    else {
+      fetchAll();
+      pushHistorial("porComprar", { tabla: "por_comprar", tipo: "insert", ids: [data.id] });
+    }
   }
   async function deletePorComprar(id) {
+    const row = porComprar.find((pc) => pc.id === id);
     const { error } = await supabase.from("por_comprar").delete().eq("id", id);
     if (error) setError("No se pudo eliminar el registro.");
+    else if (row) pushHistorial("porComprar", { tabla: "por_comprar", tipo: "delete", rows: [row] });
   }
   async function updatePorComprar(id, patch) {
+    const previous = porComprar.find((pc) => pc.id === id);
     setPorComprar((prev) => prev.map((pc) => (pc.id === id ? { ...pc, ...patch } : pc)));
     const { error } = await supabase.from("por_comprar").update(patch).eq("id", id);
     if (error) {
       setError("No se pudo actualizar el registro.");
       fetchAll();
+    } else if (previous) {
+      pushHistorial("porComprar", { tabla: "por_comprar", tipo: "update", id, previous: omitId(previous) });
     }
   }
 
@@ -311,10 +421,16 @@ export default function InventarioApp() {
 
       <main style={styles.main}>
         {tab === "inventario" && (
-          <InventarioTab productos={productos} clientes={clientes} onAdd={addProducto} onDelete={deleteProducto} onUpdate={updateProducto} onMoverAVentas={moverProductoAVenta} />
+          <InventarioTab
+            productos={productos} clientes={clientes} onAdd={addProducto} onDelete={deleteProducto} onUpdate={updateProducto} onMoverAVentas={moverProductoAVenta}
+            onRevertir={() => revertirSeccion("productos")} puedeRevertir={historial.productos.length > 0}
+          />
         )}
         {tab === "compras" && (
-          <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onUpdate={updateCompra} onImportMany={importCompras} />
+          <ComprasTab
+            productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onUpdate={updateCompra} onImportMany={importCompras}
+            onRevertir={() => revertirSeccion("compras")} puedeRevertir={historial.compras.length > 0}
+          />
         )}
         {tab === "ventas" && (
           <VentasTab
@@ -328,13 +444,21 @@ export default function InventarioApp() {
             onAddAbono={addAbono}
             onUpdateAbono={updateAbonoEntry}
             onDeleteAbono={deleteAbonoEntry}
+            onRevertir={() => revertirSeccion("ventas")}
+            puedeRevertir={historial.ventas.length > 0}
           />
         )}
         {tab === "balance" && (
-          <BalanceTab ventas={ventas} compras={compras} pagosPendientes={pagosPendientes} onAdd={addPagoPendiente} onDelete={deletePagoPendiente} />
+          <BalanceTab
+            ventas={ventas} compras={compras} pagosPendientes={pagosPendientes} onAdd={addPagoPendiente} onDelete={deletePagoPendiente}
+            onRevertir={() => revertirSeccion("pagosPendientes")} puedeRevertir={historial.pagosPendientes.length > 0}
+          />
         )}
         {tab === "porcomprar" && (
-          <PorComprarTab items={porComprar} clientes={clientes} onAdd={addPorComprar} onDelete={deletePorComprar} onUpdate={updatePorComprar} />
+          <PorComprarTab
+            items={porComprar} clientes={clientes} onAdd={addPorComprar} onDelete={deletePorComprar} onUpdate={updatePorComprar}
+            onRevertir={() => revertirSeccion("porComprar")} puedeRevertir={historial.porComprar.length > 0}
+          />
         )}
       </main>
     </div>
@@ -349,10 +473,27 @@ function TabButton({ icon: Icon, label, active, onClick }) {
   );
 }
 
+// Deshace la última operación (agregar, editar o eliminar) hecha en la
+// sección donde aparece este botón. Cada pestaña tiene su propio historial,
+// así que revertir en Inventario no afecta lo que se pueda revertir en Ventas.
+function RevertirButton({ onRevertir, puedeRevertir }) {
+  return (
+    <button
+      type="button"
+      style={{ ...styles.ghostBtn, opacity: puedeRevertir ? 1 : 0.5 }}
+      onClick={onRevertir}
+      disabled={!puedeRevertir}
+      title="Revertir el último cambio realizado en esta sección"
+    >
+      <Undo2 size={15} /> Revertir cambios
+    </button>
+  );
+}
+
 /* ---------------- INVENTARIO ---------------- */
 const PAGE_SIZE = 10;
 
-function InventarioTab({ productos, clientes, onAdd, onDelete, onUpdate, onMoverAVentas }) {
+function InventarioTab({ productos, clientes, onAdd, onDelete, onUpdate, onMoverAVentas, onRevertir, puedeRevertir }) {
   const [query, setQuery] = useState("");
   const [ubicacionFiltro, setUbicacionFiltro] = useState("");
   const [page, setPage] = useState(1);
@@ -412,6 +553,7 @@ function InventarioTab({ productos, clientes, onAdd, onDelete, onUpdate, onMover
           <option value="">Todas las ubicaciones</option>
           {UBICACION_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
+        <RevertirButton onRevertir={onRevertir} puedeRevertir={puedeRevertir} />
         <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Nuevo producto</button>
       </div>
 
@@ -626,7 +768,7 @@ function MoverAVentaModal({ producto, clientes, onClose, onConfirm }) {
 }
 
 /* ---------------- COMPRAS ---------------- */
-function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate, onImportMany }) {
+function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate, onImportMany, onRevertir, puedeRevertir }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ nombreProducto: "", sku: "", cantidad: "1", valorUnitario: "", fecha: today(), quienPago: "", factura: "" });
   const [facturaFiltro, setFacturaFiltro] = useState("");
@@ -781,6 +923,7 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate, onImportMan
             {cargandoPdf ? <Loader2 size={16} /> : <Upload size={16} />}
             {cargandoPdf ? "Leyendo factura…" : "Importar factura (PDF)"}
           </button>
+          <RevertirButton onRevertir={onRevertir} puedeRevertir={puedeRevertir} />
           <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar compra</button>
         </div>
       </div>
@@ -1015,7 +1158,7 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate, onImportMan
 /* ---------------- VENTAS ---------------- */
 const VENTAS_FILTROS_VACIOS = { cliente: "", producto: "", fechaEntrega: "", fechaPago: "", soloConSaldo: false };
 
-function VentasTab({ ventas, abonos, clientes, onAdd, onDelete, onUpdate, onUpdateFechaEntrega, onAddAbono, onUpdateAbono, onDeleteAbono }) {
+function VentasTab({ ventas, abonos, clientes, onAdd, onDelete, onUpdate, onUpdateFechaEntrega, onAddAbono, onUpdateAbono, onDeleteAbono, onRevertir, puedeRevertir }) {
   const [showForm, setShowForm] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState(VENTAS_FILTROS_VACIOS);
@@ -1163,6 +1306,7 @@ function VentasTab({ ventas, abonos, clientes, onAdd, onDelete, onUpdate, onUpda
         >
           <Download size={15} /> Exportar PNG
         </button>
+        <RevertirButton onRevertir={onRevertir} puedeRevertir={puedeRevertir} />
       </div>
 
       {!filtrosActivos && (
@@ -1387,7 +1531,7 @@ function exportVentasPNG(rows, resumen, clienteFiltro) {
 }
 
 /* ---------------- BALANCE ---------------- */
-function BalanceTab({ ventas, compras, pagosPendientes, onAdd, onDelete }) {
+function BalanceTab({ ventas, compras, pagosPendientes, onAdd, onDelete, onRevertir, puedeRevertir }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ nombre: "", monto: "", factura: "", fecha: today() });
 
@@ -1428,7 +1572,10 @@ function BalanceTab({ ventas, compras, pagosPendientes, onAdd, onDelete }) {
 
       <div style={styles.toolbar}>
         <div />
-        <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar pago pendiente</button>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <RevertirButton onRevertir={onRevertir} puedeRevertir={puedeRevertir} />
+          <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar pago pendiente</button>
+        </div>
       </div>
 
       {showForm && (
@@ -1516,7 +1663,7 @@ function exportResumenPDF(resumenAgrupado) {
 }
 
 /* ---------------- POR COMPRAR ---------------- */
-function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate }) {
+function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate, onRevertir, puedeRevertir }) {
   const [showForm, setShowForm] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState(PORCOMPRAR_FILTROS_VACIOS);
@@ -1612,6 +1759,7 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate }) {
         <button style={{ ...styles.ghostBtn, ...(filtrosActivos ? styles.ghostBtnActive : {}) }} onClick={() => setShowFilters((s) => !s)}>
           <SlidersHorizontal size={15} /> Filtros{filtrosActivos ? " •" : ""}
         </button>
+        <RevertirButton onRevertir={onRevertir} puedeRevertir={puedeRevertir} />
         <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar producto</button>
       </div>
 
