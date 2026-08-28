@@ -17,11 +17,6 @@ const fmtDate = (d) => {
 const today = () => new Date().toISOString().slice(0, 10);
 const miles = (n) => new Intl.NumberFormat("es-CO").format(Number(n) || 0);
 
-const CATEGORIAS = [
-  "ACCESORIOS", "LABIOS", "OJOS", "ROSTRO", "CEJAS", "BROCHAS", "CUIDADO FACIAL",
-  "CORPORAL", "CAPILAR", "DISNEY", "COLECCIÓN URBAN", "MINITREDYLOVERS", "OTRO",
-];
-
 const QUIEN_PAGO_OPCIONES = ["Erick", "Aleja", "Nequi"];
 
 const UBICACION_OPCIONES = ["Aleja", "Erik"];
@@ -56,6 +51,7 @@ export default function InventarioApp() {
   const [productos, setProductos] = useState([]);
   const [compras, setCompras] = useState([]);
   const [ventas, setVentas] = useState([]);
+  const [abonos, setAbonos] = useState([]);
   const [pagosPendientes, setPagosPendientes] = useState([]);
   const [porComprar, setPorComprar] = useState([]);
   const [clientes, setClientes] = useState([]);
@@ -63,15 +59,16 @@ export default function InventarioApp() {
   const [error, setError] = useState("");
 
   const fetchAll = useCallback(async () => {
-    const [p, c, v, pp, pc, cl] = await Promise.all([
+    const [p, c, v, ab, pp, pc, cl] = await Promise.all([
       fetchAllRows((from, to) => supabase.from("productos").select("*").order("nombre").range(from, to)),
       fetchAllRows((from, to) => supabase.from("compras").select("*").order("fecha", { ascending: false }).range(from, to)),
       fetchAllRows((from, to) => supabase.from("ventas").select("*").order("fecha_entrega", { ascending: false, nullsFirst: false }).range(from, to)),
+      fetchAllRows((from, to) => supabase.from("abonos_venta").select("*").order("fecha", { ascending: true }).range(from, to)),
       fetchAllRows((from, to) => supabase.from("pagos_pendientes").select("*").order("fecha", { ascending: false }).range(from, to)),
       fetchAllRows((from, to) => supabase.from("por_comprar").select("*").order("created_at", { ascending: false }).range(from, to)),
       fetchAllRows((from, to) => supabase.from("clientes").select("*").order("nombre").range(from, to)),
     ]);
-    if (p.error || c.error || v.error || pp.error || pc.error || cl.error) {
+    if (p.error || c.error || v.error || ab.error || pp.error || pc.error || cl.error) {
       setError("No se pudo conectar con la base de datos. Revisa la configuración de Supabase.");
       return;
     }
@@ -79,6 +76,7 @@ export default function InventarioApp() {
     setProductos(p.data || []);
     setCompras(c.data || []);
     setVentas(v.data || []);
+    setAbonos(ab.data || []);
     setPagosPendientes(pp.data || []);
     setPorComprar(pc.data || []);
     setClientes(cl.data || []);
@@ -92,6 +90,7 @@ export default function InventarioApp() {
       .on("postgres_changes", { event: "*", schema: "public", table: "productos" }, fetchAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "compras" }, fetchAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "ventas" }, fetchAll)
+      .on("postgres_changes", { event: "*", schema: "public", table: "abonos_venta" }, fetchAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "pagos_pendientes" }, fetchAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "por_comprar" }, fetchAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "clientes" }, fetchAll)
@@ -104,7 +103,7 @@ export default function InventarioApp() {
 
   async function addProducto(p) {
     const { error } = await supabase.from("productos").insert({
-      nombre: p.nombre, sku: p.sku, categoria: p.categoria, cantidad: p.cantidad, precio_venta: p.precioVenta, costo: p.costo,
+      nombre: p.nombre, sku: p.sku, cantidad: p.cantidad, costo: p.costo,
       "Ubicación": p.ubicacion || null,
     });
     if (error) setError("No se pudo guardar el producto.");
@@ -113,14 +112,6 @@ export default function InventarioApp() {
   async function deleteProducto(id) {
     const { error } = await supabase.from("productos").delete().eq("id", id);
     if (error) setError("No se pudo eliminar el producto.");
-  }
-  async function updatePrecioVenta(id, precioVenta) {
-    setProductos((prev) => prev.map((p) => (p.id === id ? { ...p, precio_venta: precioVenta } : p)));
-    const { error } = await supabase.from("productos").update({ precio_venta: precioVenta }).eq("id", id);
-    if (error) {
-      setError("No se pudo actualizar el precio de venta.");
-      fetchAll();
-    }
   }
   async function updateCantidad(id, cantidad) {
     setProductos((prev) => prev.map((p) => (p.id === id ? { ...p, cantidad } : p)));
@@ -172,13 +163,34 @@ export default function InventarioApp() {
       fetchAll();
     }
   }
+  // abono/saldo/fecha_pago de una venta ya no se escriben directamente: se
+  // calculan solos en la base de datos (trigger fn_recalcular_venta_pago) a
+  // partir de las filas de abonos_venta. Por eso al crear una venta con un
+  // abono inicial, ese abono se guarda como el primer registro en
+  // abonos_venta en lugar de escribirse en las columnas de ventas.
   async function addVenta(v) {
-    const { error } = await supabase.from("ventas").insert({
-      nombre_producto: v.nombreProducto, cantidad: v.cantidad, precio_venta: v.precioVenta, valor_total: v.valorTotal,
-      cliente: v.cliente, fecha_entrega: v.fechaEntrega || null, fecha_pago: v.fechaPago || null, abono: v.abono, saldo: v.saldo, metodo_pago: v.metodoPago,
-    });
-    if (error) setError("No se pudo guardar la venta.");
-    else fetchAll();
+    const { data, error } = await supabase
+      .from("ventas")
+      .insert({
+        nombre_producto: v.nombreProducto, cantidad: v.cantidad, precio_venta: v.precioVenta, valor_total: v.valorTotal,
+        cliente: v.cliente, fecha_entrega: v.fechaEntrega || null, metodo_pago: v.metodoPago,
+      })
+      .select()
+      .single();
+    if (error) {
+      setError("No se pudo guardar la venta.");
+      return;
+    }
+    if (Number(v.abono) > 0) {
+      const { error: abonoError } = await supabase.from("abonos_venta").insert({
+        venta_id: data.id,
+        fecha: v.fechaPago || v.fechaEntrega || today(),
+        monto: Number(v.abono),
+        metodo_pago: v.metodoPago,
+      });
+      if (abonoError) setError("La venta se guardó, pero no se pudo registrar el abono inicial.");
+    }
+    fetchAll();
   }
   async function deleteVenta(id) {
     const { error } = await supabase.from("ventas").delete().eq("id", id);
@@ -192,14 +204,6 @@ export default function InventarioApp() {
       fetchAll();
     }
   }
-  async function updateFechaPago(id, fechaPago) {
-    setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, fecha_pago: fechaPago } : v)));
-    const { error } = await supabase.from("ventas").update({ fecha_pago: fechaPago || null }).eq("id", id);
-    if (error) {
-      setError("No se pudo actualizar la fecha de pago.");
-      fetchAll();
-    }
-  }
   async function updateFechaEntrega(id, fechaEntrega) {
     setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, fecha_entrega: fechaEntrega || null } : v)));
     const { error } = await supabase.from("ventas").update({ fecha_entrega: fechaEntrega || null }).eq("id", id);
@@ -208,16 +212,27 @@ export default function InventarioApp() {
       fetchAll();
     }
   }
-  async function updateAbono(id, abono) {
-    const venta = ventas.find((v) => v.id === id);
-    if (!venta) return;
-    const saldo = Math.max(Number(venta.valor_total || 0) - abono, 0);
-    setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, abono, saldo } : v)));
-    const { error } = await supabase.from("ventas").update({ abono, saldo }).eq("id", id);
+  // Historial de abonos por venta (una clienta puede abonar en varias
+  // fechas). Cada insert/update/delete aquí hace que el trigger de Supabase
+  // recalcule abono/saldo/fecha_pago de la venta correspondiente.
+  async function addAbono(ventaId, { fecha, monto, metodoPago }) {
+    const { error } = await supabase.from("abonos_venta").insert({
+      venta_id: ventaId, fecha: fecha || today(), monto: Number(monto) || 0, metodo_pago: metodoPago || null,
+    });
+    if (error) setError("No se pudo registrar el abono.");
+    else fetchAll();
+  }
+  async function updateAbonoEntry(id, patch) {
+    const { error } = await supabase.from("abonos_venta").update(patch).eq("id", id);
     if (error) {
       setError("No se pudo actualizar el abono.");
-      fetchAll();
     }
+    fetchAll();
+  }
+  async function deleteAbonoEntry(id) {
+    const { error } = await supabase.from("abonos_venta").delete().eq("id", id);
+    if (error) setError("No se pudo eliminar el abono.");
+    else fetchAll();
   }
   async function addPagoPendiente(pp) {
     const { error } = await supabase.from("pagos_pendientes").insert({
@@ -286,13 +301,24 @@ export default function InventarioApp() {
 
       <main style={styles.main}>
         {tab === "inventario" && (
-          <InventarioTab productos={productos} onAdd={addProducto} onDelete={deleteProducto} onUpdatePrecioVenta={updatePrecioVenta} onUpdateCantidad={updateCantidad} onUpdateUbicacion={updateUbicacion} />
+          <InventarioTab productos={productos} onAdd={addProducto} onDelete={deleteProducto} onUpdateCantidad={updateCantidad} onUpdateUbicacion={updateUbicacion} />
         )}
         {tab === "compras" && (
           <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onUpdate={updateCompra} onImportMany={importCompras} />
         )}
         {tab === "ventas" && (
-          <VentasTab ventas={ventas} clientes={clientes} onAdd={addVenta} onDelete={deleteVenta} onUpdate={updateVenta} onUpdateFechaPago={updateFechaPago} onUpdateFechaEntrega={updateFechaEntrega} onUpdateAbono={updateAbono} />
+          <VentasTab
+            ventas={ventas}
+            abonos={abonos}
+            clientes={clientes}
+            onAdd={addVenta}
+            onDelete={deleteVenta}
+            onUpdate={updateVenta}
+            onUpdateFechaEntrega={updateFechaEntrega}
+            onAddAbono={addAbono}
+            onUpdateAbono={updateAbonoEntry}
+            onDeleteAbono={deleteAbonoEntry}
+          />
         )}
         {tab === "balance" && (
           <BalanceTab ventas={ventas} compras={compras} pagosPendientes={pagosPendientes} onAdd={addPagoPendiente} onDelete={deletePagoPendiente} />
@@ -316,12 +342,12 @@ function TabButton({ icon: Icon, label, active, onClick }) {
 /* ---------------- INVENTARIO ---------------- */
 const PAGE_SIZE = 10;
 
-function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpdateCantidad, onUpdateUbicacion }) {
+function InventarioTab({ productos, onAdd, onDelete, onUpdateCantidad, onUpdateUbicacion }) {
   const [query, setQuery] = useState("");
   const [ubicacionFiltro, setUbicacionFiltro] = useState("");
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ nombre: "", sku: "", categoria: CATEGORIAS[0], cantidad: "", precioVenta: "", costo: "", ubicacion: "" });
+  const [form, setForm] = useState({ nombre: "", sku: "", cantidad: "", costo: "", ubicacion: "" });
 
   const hayFiltrosActivos = query.trim() !== "" || ubicacionFiltro !== "";
 
@@ -352,8 +378,8 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
   function submit(e) {
     e.preventDefault();
     if (!form.nombre.trim()) return;
-    onAdd({ nombre: form.nombre.trim(), sku: form.sku.trim(), categoria: form.categoria, cantidad: Number(form.cantidad) || 0, precioVenta: Number(form.precioVenta) || 0, costo: Number(form.costo) || 0, ubicacion: form.ubicacion });
-    setForm({ nombre: "", sku: "", categoria: CATEGORIAS[0], cantidad: "", precioVenta: "", costo: "", ubicacion: "" });
+    onAdd({ nombre: form.nombre.trim(), sku: form.sku.trim(), cantidad: Number(form.cantidad) || 0, costo: Number(form.costo) || 0, ubicacion: form.ubicacion });
+    setForm({ nombre: "", sku: "", cantidad: "", costo: "", ubicacion: "" });
     setShowForm(false);
   }
 
@@ -387,19 +413,11 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
             <Field label="SKU / Referencia *">
               <input style={styles.input} value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} required />
             </Field>
-            <Field label="Categoría *">
-              <select style={styles.input} value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })} required>
-                {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </Field>
             <Field label="Cantidad *">
               <input type="number" min="0" style={styles.input} value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} required />
             </Field>
             <Field label="Costo (compra) c/u *">
               <input type="number" min="0" style={styles.input} value={form.costo} onChange={(e) => setForm({ ...form, costo: e.target.value })} required />
-            </Field>
-            <Field label="Precio venta cada uno *">
-              <input type="number" min="0" style={styles.input} value={form.precioVenta} onChange={(e) => setForm({ ...form, precioVenta: e.target.value })} required />
             </Field>
             <Field label="Ubicación">
               <select style={styles.input} value={form.ubicacion} onChange={(e) => setForm({ ...form, ubicacion: e.target.value })}>
@@ -419,14 +437,14 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
         <table style={styles.table}>
           <thead>
             <tr>
-              <th style={styles.th}>Producto</th><th style={styles.th}>SKU</th><th style={styles.th}>Categoría</th>
-              <th style={styles.th}>Cantidad</th><th style={styles.th}>Costo</th><th style={styles.th}>Precio venta cada uno</th>
+              <th style={styles.th}>Producto</th><th style={styles.th}>SKU</th>
+              <th style={styles.th}>Cantidad</th><th style={styles.th}>Costo</th>
               <th style={styles.th}>Ubicación</th><th style={styles.th}></th>
             </tr>
           </thead>
           <tbody>
             {visibles.length === 0 && (
-              <tr><td colSpan={8} style={styles.emptyCell}>
+              <tr><td colSpan={6} style={styles.emptyCell}>
                 {filtered.length === 0 && productos.length > 0 ? "Ningún producto coincide con la búsqueda o la ubicación seleccionada." : "Aún no hay productos que coincidan. Agrega el primero arriba."}
               </td></tr>
             )}
@@ -436,14 +454,10 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdatePrecioVenta, onUpda
                 <tr key={p.id}>
                   <td style={styles.td}><strong>{p.nombre}</strong></td>
                   <td style={styles.tdMuted}>{p.sku || "—"}</td>
-                  <td style={styles.tdMuted}><span style={styles.pill}>{p.categoria}</span></td>
                   <td style={styles.td}>
                     <CantidadInput value={p.cantidad} onSave={(nueva) => onUpdateCantidad(p.id, nueva)} low={cantidad <= 2} />
                   </td>
                   <td style={styles.td}>{fmt(p.costo)}</td>
-                  <td style={styles.td}>
-                    <PrecioVentaInput value={p.precio_venta} onSave={(nuevo) => onUpdatePrecioVenta(p.id, nuevo)} />
-                  </td>
                   <td style={styles.td}>
                     <UbicacionSelect value={p["Ubicación"]} onSave={(nuevo) => onUpdateUbicacion(p.id, nuevo)} />
                   </td>
@@ -883,7 +897,7 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate, onImportMan
 /* ---------------- VENTAS ---------------- */
 const VENTAS_FILTROS_VACIOS = { cliente: "", producto: "", fechaEntrega: "", fechaPago: "", soloConSaldo: false };
 
-function VentasTab({ ventas, clientes, onAdd, onDelete, onUpdate, onUpdateFechaPago, onUpdateFechaEntrega, onUpdateAbono }) {
+function VentasTab({ ventas, abonos, clientes, onAdd, onDelete, onUpdate, onUpdateFechaEntrega, onAddAbono, onUpdateAbono, onDeleteAbono }) {
   const [showForm, setShowForm] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState(VENTAS_FILTROS_VACIOS);
@@ -908,10 +922,17 @@ function VentasTab({ ventas, clientes, onAdd, onDelete, onUpdate, onUpdateFechaP
     setShowForm(false);
   }
 
+  // Editar el total a mano no pasa por abonos_venta, así que replicamos aquí
+  // la misma regla del trigger de Supabase (saldo y fecha_pago a partir de
+  // lo ya abonado) para que quede consistente sin esperar un refresh.
   function updateValorTotalVenta(v, nuevoTotal) {
     const total = Number(nuevoTotal) || 0;
-    const saldo = Math.max(total - Number(v.abono || 0), 0);
-    onUpdate(v.id, { valor_total: total, saldo });
+    const abonosVenta = abonos.filter((a) => a.venta_id === v.id);
+    const totalAbonado = abonosVenta.reduce((s, a) => s + Number(a.monto || 0), 0);
+    const ultimaFecha = abonosVenta.reduce((max, a) => (a.fecha && (!max || a.fecha > max) ? a.fecha : max), null);
+    const saldo = Math.max(total - totalAbonado, 0);
+    const fechaPago = total > 0 && totalAbonado >= total ? ultimaFecha : null;
+    onUpdate(v.id, { valor_total: total, saldo, fecha_pago: fechaPago });
   }
 
   const filtrosActivos =
@@ -970,10 +991,18 @@ function VentasTab({ ventas, clientes, onAdd, onDelete, onUpdate, onUpdateFechaP
           <FechaPagoInput value={v.fecha_entrega} onSave={(nueva) => onUpdateFechaEntrega(v.id, nueva)} />
         </td>
         <td style={styles.td}>
-          <FechaPagoInput value={v.fecha_pago} onSave={(nueva) => onUpdateFechaPago(v.id, nueva)} />
+          <span style={{ ...styles.stockPill, ...(v.fecha_pago ? {} : styles.stockLow) }}>
+            {v.fecha_pago ? fmtDate(v.fecha_pago) : "Pendiente"}
+          </span>
         </td>
         <td style={styles.td}>
-          <MoneyCellInput value={v.abono} onSave={(nuevo) => onUpdateAbono(v.id, nuevo)} />
+          <AbonosCell
+            venta={v}
+            abonos={abonos.filter((a) => a.venta_id === v.id)}
+            onAdd={onAddAbono}
+            onUpdate={onUpdateAbono}
+            onDelete={onDeleteAbono}
+          />
         </td>
         <td style={styles.td}><span style={{ ...styles.stockPill, ...(v.saldo > 0 ? styles.stockLow : {}) }}>{fmt(v.saldo)}</span></td>
         <td style={styles.td}>
@@ -1011,7 +1040,7 @@ function VentasTab({ ventas, clientes, onAdd, onDelete, onUpdate, onUpdateFechaP
             exportVentasPNG(sorted, {
               totalAbono: filtrosActivos ? abonoFiltrado : totalAbonos,
               totalSaldo: filtrosActivos ? saldoFiltrado : totalSaldo,
-            }, filtrosActivos)
+            }, filters.cliente.trim())
           }
         >
           <Download size={15} /> Exportar PNG
@@ -1076,11 +1105,11 @@ function VentasTab({ ventas, clientes, onAdd, onDelete, onUpdate, onUpdateFechaP
             <Field label="Fecha de entrega">
               <input type="date" style={styles.input} value={form.fechaEntrega} onChange={(e) => setForm({ ...form, fechaEntrega: e.target.value })} />
             </Field>
-            <Field label="Fecha de pago">
+            <Field label="Fecha del abono inicial">
               <input type="date" style={styles.input} value={form.fechaPago} onChange={(e) => setForm({ ...form, fechaPago: e.target.value })} />
             </Field>
-            <Field label="Abono recibido *">
-              <input type="number" min="0" style={styles.input} value={form.abono} onChange={(e) => setForm({ ...form, abono: e.target.value })} required />
+            <Field label="Abono inicial">
+              <input type="number" min="0" style={styles.input} value={form.abono} onChange={(e) => setForm({ ...form, abono: e.target.value })} />
             </Field>
             <Field label="Método de pago *">
               <select style={styles.input} value={form.metodoPago} onChange={(e) => setForm({ ...form, metodoPago: e.target.value })} required>
@@ -1139,7 +1168,7 @@ function truncateToWidth(ctx, text, maxWidth) {
   return truncated + "…";
 }
 
-function exportVentasPNG(rows, resumen, filtrosActivos) {
+function exportVentasPNG(rows, resumen, clienteFiltro) {
   const measureCanvas = document.createElement("canvas");
   const mctx = measureCanvas.getContext("2d");
   mctx.font = "bold 11px Arial";
@@ -1155,12 +1184,11 @@ function exportVentasPNG(rows, resumen, filtrosActivos) {
     { key: "cantidad", label: "Cant.", width: 55 },
     { key: "abono", label: "Abono", width: 100 },
     { key: "saldo", label: "Saldo", width: 100 },
-    { key: "pago", label: "Pago", width: 90 },
   ];
   const padding = 24;
   const rowHeight = 30;
   const headerHeight = 34;
-  const titleHeight = 62;
+  const titleHeight = 46;
   const footerHeight = 34;
   const tableWidth = cols.reduce((s, c) => s + c.width, 0);
   const width = tableWidth + padding * 2;
@@ -1179,14 +1207,7 @@ function exportVentasPNG(rows, resumen, filtrosActivos) {
 
   ctx.fillStyle = "#3B2A33";
   ctx.font = "bold 18px Arial";
-  ctx.fillText(`Reporte de ventas${filtrosActivos ? " (filtrado)" : ""}`, padding, 30);
-  ctx.font = "12px Arial";
-  ctx.fillStyle = "#8B6B76";
-  ctx.fillText(
-    `Generado el ${new Date().toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" })}`,
-    padding,
-    48
-  );
+  ctx.fillText(`Saldo: ${fmt(resumen.totalSaldo)}${clienteFiltro ? ` — ${clienteFiltro}` : ""}`, padding, 30);
 
   let y = titleHeight;
   ctx.fillStyle = "#FCEFE0";
@@ -1216,7 +1237,6 @@ function exportVentasPNG(rows, resumen, filtrosActivos) {
         String(v.cantidad ?? "—"),
         fmt(v.abono),
         fmt(v.saldo),
-        v.metodo_pago || "—",
       ];
       x = padding;
       ctx.font = "12px Arial";
@@ -1627,31 +1647,94 @@ function StatCard({ label, value, accent }) {
     </div>
   );
 }
-function PrecioVentaInput({ value, onSave }) {
-  const [draft, setDraft] = useState(String(value ?? 0));
+// Muestra el total abonado de una venta y, al hacer clic, despliega el
+// historial de abonos (fecha + monto) de esa venta: se pueden agregar,
+// editar o borrar. abono/saldo/fecha_pago de la venta los recalcula solo el
+// trigger de Supabase apenas cambia algo aquí.
+function AbonosCell({ venta, abonos, onAdd, onUpdate, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const [nuevaFecha, setNuevaFecha] = useState(today());
+  const [nuevoMonto, setNuevoMonto] = useState("");
+  const wrapRef = useRef(null);
 
   useEffect(() => {
-    setDraft(String(value ?? 0));
-  }, [value]);
+    if (!open) return;
+    function onClickOutside(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
 
-  function commit() {
-    const nuevo = Number(draft) || 0;
-    if (nuevo !== Number(value)) onSave(nuevo);
-    else setDraft(String(value ?? 0));
+  const ordenados = [...abonos].sort((a, b) => (a.fecha || "").localeCompare(b.fecha || ""));
+
+  function submitAbono(e) {
+    e.preventDefault();
+    const monto = Number(nuevoMonto) || 0;
+    if (monto <= 0) return;
+    onAdd(venta.id, { fecha: nuevaFecha, monto });
+    setNuevoMonto("");
   }
 
   return (
-    <input
-      type="number"
-      min="0"
-      style={styles.priceInput}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.currentTarget.blur();
-      }}
-    />
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <button type="button" style={styles.abonoBtn} onClick={() => setOpen((o) => !o)} title="Ver / agregar abonos">
+        {fmt(venta.abono)}
+        {ordenados.length > 1 ? <span style={styles.abonoCount}>{ordenados.length}</span> : null}
+      </button>
+      {open && (
+        <div style={styles.abonoPopover} onClick={(e) => e.stopPropagation()}>
+          <div style={styles.abonoPopoverHeader}>
+            <strong style={{ fontSize: 12.5 }}>Abonos de {venta.cliente || "esta venta"}</strong>
+            <button type="button" style={styles.iconBtn} onClick={() => setOpen(false)}><X size={14} /></button>
+          </div>
+
+          {ordenados.length === 0 ? (
+            <p style={{ fontSize: 12, color: "#8B6B76", margin: "4px 0 10px" }}>Sin abonos registrados.</p>
+          ) : (
+            <ul style={styles.abonoList}>
+              {ordenados.map((a) => (
+                <li key={a.id} style={styles.abonoItem}>
+                  <input
+                    type="date"
+                    style={styles.abonoDateInput}
+                    defaultValue={a.fecha || ""}
+                    onBlur={(e) => { if (e.target.value !== (a.fecha || "")) onUpdate(a.id, { fecha: e.target.value }); }}
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    style={styles.abonoMoneyInput}
+                    defaultValue={a.monto}
+                    onBlur={(e) => {
+                      const nuevo = Number(e.target.value) || 0;
+                      if (nuevo !== Number(a.monto)) onUpdate(a.id, { monto: nuevo });
+                    }}
+                  />
+                  <button type="button" style={styles.iconBtn} onClick={() => onDelete(a.id)} title="Eliminar abono">
+                    <Trash2 size={13} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <form onSubmit={submitAbono} style={styles.abonoForm}>
+            <input type="date" style={styles.abonoDateInput} value={nuevaFecha} onChange={(e) => setNuevaFecha(e.target.value)} required />
+            <input
+              type="number"
+              min="0"
+              placeholder="Monto"
+              style={styles.abonoMoneyInput}
+              value={nuevoMonto}
+              onChange={(e) => setNuevoMonto(e.target.value)}
+              required
+            />
+            <button type="submit" style={styles.abonoAddBtn} title="Agregar abono"><Plus size={14} /></button>
+          </form>
+        </div>
+      )}
+    </div>
   );
 }
 function MoneyCellInput({ value, onSave, width }) {
@@ -1904,4 +1987,14 @@ const styles = {
   stockPill: { background: "#EAF6F4", color: "#3F8F87", padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600 },
   stockLow: { background: "#FCF1DC", color: "#A9791F" },
   iconBtn: { background: "transparent", border: "none", color: "#B89099", cursor: "pointer", padding: 6, borderRadius: 6 },
+  abonoBtn: { display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #EEDEE0", borderRadius: 8, padding: "6px 10px", fontSize: 13, fontFamily: "'Poppins', sans-serif", background: "#fff", color: "#3B2A33", cursor: "pointer" },
+  abonoCount: { background: "#F1E3E8", color: "#B84C71", borderRadius: 20, padding: "1px 7px", fontSize: 11, fontWeight: 700 },
+  abonoPopover: { position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 20, background: "#fff", border: "1px solid #EEDEE0", borderRadius: 10, padding: 12, width: 240, boxShadow: "0 8px 24px rgba(59,42,51,0.14)" },
+  abonoPopoverHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, color: "#3B2A33" },
+  abonoList: { listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6, maxHeight: 160, overflowY: "auto" },
+  abonoItem: { display: "flex", alignItems: "center", gap: 6 },
+  abonoDateInput: { border: "1px solid #EEDEE0", borderRadius: 7, padding: "5px 6px", fontSize: 12, fontFamily: "'Poppins', sans-serif", background: "#fff", color: "#3B2A33", outline: "none", width: 118, boxSizing: "border-box" },
+  abonoMoneyInput: { border: "1px solid #EEDEE0", borderRadius: 7, padding: "5px 6px", fontSize: 12, fontFamily: "'Poppins', sans-serif", background: "#fff", color: "#3B2A33", outline: "none", width: 76, boxSizing: "border-box" },
+  abonoForm: { display: "flex", alignItems: "center", gap: 6, marginTop: 8, paddingTop: 8, borderTop: "1px solid #F4E9E9" },
+  abonoAddBtn: { display: "flex", alignItems: "center", justifyContent: "center", background: "#D9678C", color: "#fff", border: "none", borderRadius: 7, width: 28, height: 28, cursor: "pointer", flexShrink: 0 },
 };
