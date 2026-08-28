@@ -113,19 +113,11 @@ export default function InventarioApp() {
     const { error } = await supabase.from("productos").delete().eq("id", id);
     if (error) setError("No se pudo eliminar el producto.");
   }
-  async function updateCantidad(id, cantidad) {
-    setProductos((prev) => prev.map((p) => (p.id === id ? { ...p, cantidad } : p)));
-    const { error } = await supabase.from("productos").update({ cantidad }).eq("id", id);
+  async function updateProducto(id, patch) {
+    setProductos((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+    const { error } = await supabase.from("productos").update(patch).eq("id", id);
     if (error) {
-      setError("No se pudo actualizar la cantidad.");
-      fetchAll();
-    }
-  }
-  async function updateUbicacion(id, ubicacion) {
-    setProductos((prev) => prev.map((p) => (p.id === id ? { ...p, "Ubicación": ubicacion } : p)));
-    const { error } = await supabase.from("productos").update({ "Ubicación": ubicacion }).eq("id", id);
-    if (error) {
-      setError("No se pudo actualizar la ubicación.");
+      setError("No se pudo actualizar el producto.");
       fetchAll();
     }
   }
@@ -191,6 +183,24 @@ export default function InventarioApp() {
       if (abonoError) setError("La venta se guardó, pero no se pudo registrar el abono inicial.");
     }
     fetchAll();
+  }
+  // Registra una venta a partir de un producto de inventario y descuenta la
+  // cantidad vendida del stock. Los datos que faltan (cliente, precio de
+  // venta, etc.) los pide el modal MoverAVentaModal antes de llegar aquí.
+  async function moverProductoAVenta(producto, datos) {
+    await addVenta({
+      nombreProducto: producto.nombre,
+      cantidad: datos.cantidad,
+      precioVenta: datos.precioVenta,
+      valorTotal: datos.cantidad * datos.precioVenta,
+      cliente: datos.cliente,
+      fechaEntrega: datos.fechaEntrega,
+      fechaPago: datos.fechaPago,
+      abono: datos.abono,
+      metodoPago: datos.metodoPago,
+    });
+    const restante = Math.max((Number(producto.cantidad) || 0) - datos.cantidad, 0);
+    await updateProducto(producto.id, { cantidad: restante });
   }
   async function deleteVenta(id) {
     const { error } = await supabase.from("ventas").delete().eq("id", id);
@@ -301,7 +311,7 @@ export default function InventarioApp() {
 
       <main style={styles.main}>
         {tab === "inventario" && (
-          <InventarioTab productos={productos} onAdd={addProducto} onDelete={deleteProducto} onUpdateCantidad={updateCantidad} onUpdateUbicacion={updateUbicacion} />
+          <InventarioTab productos={productos} clientes={clientes} onAdd={addProducto} onDelete={deleteProducto} onUpdate={updateProducto} onMoverAVentas={moverProductoAVenta} />
         )}
         {tab === "compras" && (
           <ComprasTab productos={productos} compras={compras} onAdd={addCompra} onDelete={deleteCompra} onUpdate={updateCompra} onImportMany={importCompras} />
@@ -342,12 +352,13 @@ function TabButton({ icon: Icon, label, active, onClick }) {
 /* ---------------- INVENTARIO ---------------- */
 const PAGE_SIZE = 10;
 
-function InventarioTab({ productos, onAdd, onDelete, onUpdateCantidad, onUpdateUbicacion }) {
+function InventarioTab({ productos, clientes, onAdd, onDelete, onUpdate, onMoverAVentas }) {
   const [query, setQuery] = useState("");
   const [ubicacionFiltro, setUbicacionFiltro] = useState("");
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ nombre: "", sku: "", cantidad: "", costo: "", ubicacion: "" });
+  const [moviendo, setMoviendo] = useState(null);
 
   const hayFiltrosActivos = query.trim() !== "" || ubicacionFiltro !== "";
 
@@ -452,16 +463,23 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdateCantidad, onUpdateU
               const cantidad = Number(p.cantidad) || 0;
               return (
                 <tr key={p.id}>
-                  <td style={styles.td}><strong>{p.nombre}</strong></td>
-                  <td style={styles.tdMuted}>{p.sku || "—"}</td>
                   <td style={styles.td}>
-                    <CantidadInput value={p.cantidad} onSave={(nueva) => onUpdateCantidad(p.id, nueva)} low={cantidad <= 2} />
+                    <TextCellInput value={p.nombre} onSave={(nuevo) => onUpdate(p.id, { nombre: nuevo })} width={180} />
                   </td>
-                  <td style={styles.td}>{fmt(p.costo)}</td>
-                  <td style={styles.td}>
-                    <UbicacionSelect value={p["Ubicación"]} onSave={(nuevo) => onUpdateUbicacion(p.id, nuevo)} />
+                  <td style={styles.tdMuted}>
+                    <TextCellInput value={p.sku} onSave={(nuevo) => onUpdate(p.id, { sku: nuevo })} width={100} />
                   </td>
                   <td style={styles.td}>
+                    <CantidadInput value={p.cantidad} onSave={(nueva) => onUpdate(p.id, { cantidad: nueva })} low={cantidad <= 2} />
+                  </td>
+                  <td style={styles.td}>
+                    <MoneyCellInput value={p.costo} onSave={(nuevo) => onUpdate(p.id, { costo: nuevo })} />
+                  </td>
+                  <td style={styles.td}>
+                    <UbicacionSelect value={p["Ubicación"]} onSave={(nuevo) => onUpdate(p.id, { "Ubicación": nuevo })} />
+                  </td>
+                  <td style={styles.td}>
+                    <button style={styles.iconBtn} onClick={() => setMoviendo(p)} title="Mover a ventas"><TrendingUp size={15} /></button>
                     <button style={styles.iconBtn} onClick={() => onDelete(p.id)} title="Eliminar producto"><Trash2 size={15} /></button>
                   </td>
                 </tr>
@@ -503,6 +521,106 @@ function InventarioTab({ productos, onAdd, onDelete, onUpdateCantidad, onUpdateU
           <span style={styles.paginationInfo}>{filtered.length} producto{filtered.length === 1 ? "" : "s"} encontrado{filtered.length === 1 ? "" : "s"}</span>
         </div>
       )}
+
+      {moviendo && (
+        <MoverAVentaModal
+          producto={moviendo}
+          clientes={clientes}
+          onClose={() => setMoviendo(null)}
+          onConfirm={async (datos) => {
+            await onMoverAVentas(moviendo, datos);
+            setMoviendo(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function MoverAVentaModal({ producto, clientes, onClose, onConfirm }) {
+  const [form, setForm] = useState({
+    cantidad: String(Number(producto.cantidad) || 1),
+    precioVenta: "",
+    cliente: "",
+    fechaEntrega: "",
+    fechaPago: "",
+    abono: "",
+    metodoPago: METODO_PAGO_OPCIONES[0],
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  const disponible = Number(producto.cantidad) || 0;
+
+  async function submit(e) {
+    e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await onConfirm({
+        cantidad: Number(form.cantidad) || 0,
+        precioVenta: Number(form.precioVenta) || 0,
+        cliente: form.cliente.trim(),
+        fechaEntrega: form.fechaEntrega,
+        fechaPago: form.fechaPago,
+        abono: Number(form.abono) || 0,
+        metodoPago: form.metodoPago,
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+          <h3 style={{ ...styles.sectionTitle, margin: 0 }}>Mover a ventas</h3>
+          <button type="button" style={styles.iconBtn} onClick={onClose} title="Cerrar"><X size={16} /></button>
+        </div>
+        <p style={{ fontSize: 13, color: "#8B6B76", margin: "0 0 16px" }}>
+          <strong>{producto.nombre}</strong> · Disponible en inventario: {disponible}
+        </p>
+        <form onSubmit={submit}>
+          <div style={styles.formGrid}>
+            <Field label="Cantidad a vender *">
+              <input
+                type="number" min="1" max={disponible || undefined} style={styles.input}
+                value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} required
+              />
+            </Field>
+            <Field label="Precio de venta c/u *">
+              <input type="number" min="0" style={styles.input} value={form.precioVenta} onChange={(e) => setForm({ ...form, precioVenta: e.target.value })} required />
+            </Field>
+            <Field label="Cliente *">
+              <ClienteSelect
+                value={form.cliente}
+                clientes={clientes}
+                onChange={(nuevo) => setForm({ ...form, cliente: nuevo })}
+                inputStyle={styles.input}
+                required
+              />
+            </Field>
+            <Field label="Fecha de entrega">
+              <input type="date" style={styles.input} value={form.fechaEntrega} onChange={(e) => setForm({ ...form, fechaEntrega: e.target.value })} />
+            </Field>
+            <Field label="Fecha de pago">
+              <input type="date" style={styles.input} value={form.fechaPago} onChange={(e) => setForm({ ...form, fechaPago: e.target.value })} />
+            </Field>
+            <Field label="Abono recibido *">
+              <input type="number" min="0" style={styles.input} value={form.abono} onChange={(e) => setForm({ ...form, abono: e.target.value })} required />
+            </Field>
+            <Field label="Método de pago *">
+              <select style={styles.input} value={form.metodoPago} onChange={(e) => setForm({ ...form, metodoPago: e.target.value })} required>
+                {METODO_PAGO_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div style={styles.formActions}>
+            <button type="button" style={styles.ghostBtn} onClick={onClose}>Cancelar</button>
+            <button type="submit" style={styles.primaryBtn} disabled={submitting}>{submitting ? "Guardando…" : "Confirmar venta"}</button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
@@ -1968,6 +2086,8 @@ const styles = {
   checkboxRow: { display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: "#3B2A33", fontFamily: "'Poppins', sans-serif" },
   linkBtn: { background: "transparent", border: "none", color: "#B84C71", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" },
   card: { background: "#FBF3F1", border: "1px solid #EEDEE0", borderRadius: 12, padding: 18, marginBottom: 20 },
+  modalOverlay: { position: "fixed", inset: 0, background: "rgba(59,42,51,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 20 },
+  modalCard: { background: "#FFFFFF", borderRadius: 14, padding: 22, width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 10px 40px rgba(59,42,51,0.25)" },
   formGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 },
   formActions: { display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 },
   label: { fontSize: 12, color: "#8B6B76", fontWeight: 500 },
