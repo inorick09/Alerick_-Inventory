@@ -75,6 +75,14 @@ export default function InventarioApp() {
     const { id, ...rest } = row;
     return rest;
   }
+  // Igual que omitId, pero además descarta `abono`: en las filas de ventas
+  // ese campo se calcula en el cliente a partir de abonos_venta (ya no es
+  // una columna real), así que no debe guardarse en el historial ni
+  // reenviarse como parte de un UPDATE/INSERT a Supabase.
+  function omitIdVenta(row) {
+    const { id, abono, ...rest } = row;
+    return rest;
+  }
 
   async function aplicarReversion(entry) {
     const { tabla, tipo } = entry;
@@ -128,8 +136,18 @@ export default function InventarioApp() {
     setError("");
     setProductos(p.data || []);
     setCompras(c.data || []);
-    setVentas(v.data || []);
-    setAbonos(ab.data || []);
+    // El abono de cada venta ya no vive en una columna de la tabla ventas
+    // (se quitó por quedar duplicada con abonos_venta): se calcula aquí
+    // sumando los registros de abonos_venta de cada venta, cada vez que se
+    // recargan los datos. Así el resto de la app (tarjetas de totales,
+    // columna "Abono", export a PNG) sigue funcionando igual que antes.
+    const abonosData = ab.data || [];
+    const abonoPorVenta = new Map();
+    for (const a of abonosData) {
+      abonoPorVenta.set(a.venta_id, (abonoPorVenta.get(a.venta_id) || 0) + Number(a.monto || 0));
+    }
+    setVentas((v.data || []).map((venta) => ({ ...venta, abono: abonoPorVenta.get(venta.id) || 0 })));
+    setAbonos(abonosData);
     setPagosPendientes(pp.data || []);
     setPorComprar(pc.data || []);
     setClientes(cl.data || []);
@@ -283,8 +301,13 @@ export default function InventarioApp() {
     if (error) setError("No se pudo eliminar la venta.");
     else if (row) {
       // El delete de la venta borra en cascada sus abonos_venta, así que hay
-      // que guardarlos aparte para poder restaurarlos si se revierte.
-      pushHistorial("ventas", { tabla: "ventas", tipo: "delete_con_abonos", rows: [row], abonos: abonosRelacionados });
+      // que guardarlos aparte para poder restaurarlos si se revierte. `abono`
+      // en `row` es un campo calculado en el cliente (ya no existe como
+      // columna en la tabla ventas), así que se descarta antes de guardarlo:
+      // si se llegara a reinsertar tal cual, Supabase rechazaría el insert
+      // por tener una columna que no existe.
+      const { abono, ...rowSinAbono } = row;
+      pushHistorial("ventas", { tabla: "ventas", tipo: "delete_con_abonos", rows: [rowSinAbono], abonos: abonosRelacionados });
     }
   }
   async function updateVenta(id, patch) {
@@ -295,7 +318,7 @@ export default function InventarioApp() {
       setError("No se pudo actualizar la venta.");
       fetchAll();
     } else if (previous) {
-      pushHistorial("ventas", { tabla: "ventas", tipo: "update", id, previous: omitId(previous) });
+      pushHistorial("ventas", { tabla: "ventas", tipo: "update", id, previous: omitIdVenta(previous) });
     }
   }
   async function updateFechaEntrega(id, fechaEntrega) {
@@ -306,7 +329,7 @@ export default function InventarioApp() {
       setError("No se pudo actualizar la fecha de entrega.");
       fetchAll();
     } else if (previous) {
-      pushHistorial("ventas", { tabla: "ventas", tipo: "update", id, previous: omitId(previous) });
+      pushHistorial("ventas", { tabla: "ventas", tipo: "update", id, previous: omitIdVenta(previous) });
     }
   }
   // Historial de abonos por venta (una clienta puede abonar en varias

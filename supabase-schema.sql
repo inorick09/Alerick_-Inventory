@@ -42,7 +42,6 @@ create table if not exists ventas (
   cliente text,
   fecha_entrega date default current_date,
   fecha_pago date,
-  abono numeric default 0,
   saldo numeric default 0,
   metodo_pago text,
   created_at timestamptz default now()
@@ -56,8 +55,16 @@ alter table ventas add column if not exists fecha_pago date;
 -- fechas placeholder tipo 0001-01-01 en registros importados sin fecha real):
 alter table ventas alter column fecha_entrega drop not null;
 
+-- `ventas.abono` quedó redundante una vez que el historial de abonos vive
+-- en `abonos_venta` (una clienta puede abonar en varias fechas distintas;
+-- cada fila de abonos_venta es un pago parcial). El total abonado de cada
+-- venta ahora se calcula al vuelo (en la app, sumando abonos_venta; aquí en
+-- la base, dentro de los triggers de más abajo) en vez de guardarse en una
+-- columna aparte que había que mantener sincronizada. Seguro de re-correr.
+alter table ventas drop column if exists abono;
+
 -- Historial de abonos por venta: una clienta puede abonar en varias fechas
--- distintas. Cada fila es un pago parcial; `ventas.abono`, `ventas.saldo` y
+-- distintas. Cada fila es un pago parcial; `ventas.saldo` y
 -- `ventas.fecha_pago` dejan de editarse a mano y pasan a calcularse solos
 -- (ver triggers más abajo) a partir de estos registros. `fecha_pago` queda
 -- como la fecha del abono que hizo que el saldo llegara a 0 (o null si aún
@@ -86,36 +93,27 @@ begin
   end if;
 end $$;
 
--- Migra el abono ya guardado en cada venta a un primer registro de abono,
--- para no perder el histórico que ya tenías. Solo migra las ventas que
--- todavía no tienen ningún abono registrado, así que es seguro re-correrlo.
-insert into abonos_venta (venta_id, fecha, monto, metodo_pago)
-select id, coalesce(fecha_pago, fecha_entrega, created_at::date, current_date), abono, metodo_pago
-from ventas
-where coalesce(abono, 0) > 0
-  and not exists (select 1 from abonos_venta a where a.venta_id = ventas.id);
-
--- Recalcula abono/saldo/fecha_pago de TODAS las ventas a partir de
--- abonos_venta, para que fecha_pago quede consistente con la nueva regla
--- (solo tiene fecha cuando el saldo ya es 0) incluso en datos históricos.
+-- Recalcula saldo/fecha_pago de TODAS las ventas a partir de abonos_venta,
+-- para que queden consistentes con la regla de los triggers de más abajo
+-- (fecha_pago solo tiene fecha cuando el saldo ya es 0) incluso en datos
+-- históricos. Seguro de volver a correr.
 with totales as (
   select venta_id, coalesce(sum(monto), 0) as abono_total, max(fecha) as ultima_fecha
   from abonos_venta
   group by venta_id
 )
 update ventas v
-set abono = t.abono_total,
-    saldo = greatest(coalesce(v.valor_total, 0) - t.abono_total, 0),
+set saldo = greatest(coalesce(v.valor_total, 0) - t.abono_total, 0),
     fecha_pago = case when t.abono_total >= coalesce(v.valor_total, 0) and coalesce(v.valor_total, 0) > 0 then t.ultima_fecha else null end
 from totales t
 where v.id = t.venta_id;
 
 update ventas
-set abono = 0, saldo = coalesce(valor_total, 0), fecha_pago = null
+set saldo = coalesce(valor_total, 0), fecha_pago = null
 where id not in (select venta_id from abonos_venta);
 
 -- Trigger: cada vez que se inserta, edita o borra un abono, recalcula
--- abono/saldo/fecha_pago de esa venta automáticamente.
+-- saldo/fecha_pago de esa venta automáticamente.
 create or replace function fn_recalcular_venta_pago()
 returns trigger
 language plpgsql
@@ -139,8 +137,7 @@ begin
   from abonos_venta where venta_id = v_venta_id;
 
   update ventas
-  set abono = v_total_abonado,
-      saldo = greatest(v_valor_total - v_total_abonado, 0),
+  set saldo = greatest(v_valor_total - v_total_abonado, 0),
       fecha_pago = case when v_total_abonado >= v_valor_total and v_valor_total > 0 then v_ultima_fecha else null end
   where id = v_venta_id;
 
@@ -157,9 +154,11 @@ create trigger trg_recalcular_venta_pago
   after insert or update or delete on abonos_venta
   for each row execute function fn_recalcular_venta_pago();
 
--- Si cambias el valor_total de una venta a mano (columna "Total" en la
--- tabla de Ventas), este trigger recalcula saldo/fecha_pago con los abonos
--- que ya existan, para que no queden desincronizados.
+-- Trigger: mantiene saldo/fecha_pago sincronizados con los abonos que ya
+-- existan (a) cuando se crea una venta nueva -antes no corría nada en el
+-- INSERT, así que una venta sin abono inicial se quedaba con saldo = 0 en
+-- vez de saldo = valor_total- y (b) cuando cambias el valor_total de una
+-- venta existente a mano (columna "Total" en la tabla de Ventas).
 create or replace function fn_recalcular_venta_pago_por_total()
 returns trigger
 language plpgsql
@@ -170,7 +169,7 @@ declare
   v_total_abonado numeric;
   v_ultima_fecha date;
 begin
-  if new.valor_total is distinct from old.valor_total then
+  if TG_OP = 'INSERT' or new.valor_total is distinct from old.valor_total then
     select coalesce(sum(monto), 0), max(fecha) into v_total_abonado, v_ultima_fecha
     from abonos_venta where venta_id = new.id;
 
@@ -187,7 +186,7 @@ revoke execute on function fn_recalcular_venta_pago_por_total() from authenticat
 
 drop trigger if exists trg_recalcular_venta_pago_por_total on ventas;
 create trigger trg_recalcular_venta_pago_por_total
-  before update of valor_total on ventas
+  before insert or update of valor_total on ventas
   for each row execute function fn_recalcular_venta_pago_por_total();
 
 create table if not exists pagos_pendientes (
