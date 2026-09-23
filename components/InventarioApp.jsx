@@ -795,6 +795,8 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate, onImportMan
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ nombreProducto: "", sku: "", cantidad: "1", valorUnitario: "", fecha: today(), quienPago: "", factura: "" });
   const [facturaFiltro, setFacturaFiltro] = useState("");
+  const [productoFiltroDetalle, setProductoFiltroDetalle] = useState("");
+  const [skuFiltroDetalle, setSkuFiltroDetalle] = useState("");
 
   // ---- Importar factura en PDF ----
   const fileInputRef = useRef(null);
@@ -919,7 +921,14 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate, onImportMan
   }
   const resumenFacturas = Array.from(facturasMap.values()).sort((a, b) => (b.fechaMax || "").localeCompare(a.fechaMax || ""));
 
-  const sorted = facturaFiltro ? compras.filter((c) => facturaKey(c) === facturaFiltro) : [];
+  const hayFiltrosDetalle = facturaFiltro !== "" || productoFiltroDetalle.trim() !== "" || skuFiltroDetalle.trim() !== "";
+  const sorted = hayFiltrosDetalle
+    ? compras.filter((c) =>
+        (!facturaFiltro || facturaKey(c) === facturaFiltro) &&
+        (!productoFiltroDetalle.trim() || productoNombreValor(c).toLowerCase().includes(productoFiltroDetalle.trim().toLowerCase())) &&
+        (!skuFiltroDetalle.trim() || (c.sku || "").toLowerCase().includes(skuFiltroDetalle.trim().toLowerCase()))
+      )
+    : [];
 
   return (
     <div>
@@ -1117,14 +1126,33 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate, onImportMan
         </table>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 10 }}>
         <h3 style={{ ...styles.sectionTitle, margin: 0 }}>Detalle de compras</h3>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 220 }}>
-          <label style={styles.label}>Filtrar por factura</label>
-          <select style={styles.input} value={facturaFiltro} onChange={(e) => setFacturaFiltro(e.target.value)}>
-            <option value="">Selecciona una factura…</option>
-            {resumenFacturas.map((f) => <option key={f.key} value={f.key}>{f.factura}</option>)}
-          </select>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 200 }}>
+            <label style={styles.label}>Filtrar por factura</label>
+            <select style={styles.input} value={facturaFiltro} onChange={(e) => setFacturaFiltro(e.target.value)}>
+              <option value="">Selecciona una factura…</option>
+              {resumenFacturas.map((f) => <option key={f.key} value={f.key}>{f.factura}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 180 }}>
+            <label style={styles.label}>Producto</label>
+            <input style={styles.input} placeholder="Buscar por producto…" value={productoFiltroDetalle} onChange={(e) => setProductoFiltroDetalle(e.target.value)} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 140 }}>
+            <label style={styles.label}>SKU</label>
+            <input style={styles.input} placeholder="Buscar por SKU…" value={skuFiltroDetalle} onChange={(e) => setSkuFiltroDetalle(e.target.value)} />
+          </div>
+          {hayFiltrosDetalle && (
+            <button
+              type="button"
+              style={{ ...styles.ghostBtn, alignSelf: "flex-end" }}
+              onClick={() => { setFacturaFiltro(""); setProductoFiltroDetalle(""); setSkuFiltroDetalle(""); }}
+            >
+              Limpiar filtros
+            </button>
+          )}
         </div>
       </div>
       <div style={styles.tableWrap}>
@@ -1140,7 +1168,7 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate, onImportMan
             {sorted.length === 0 && (
               <tr>
                 <td colSpan={9} style={styles.emptyCell}>
-                  {facturaFiltro ? "Esta factura no tiene compras registradas." : "Selecciona una factura arriba para ver el detalle de sus compras."}
+                  {hayFiltrosDetalle ? "Ningún resultado coincide con los filtros." : "Selecciona una factura o busca por producto/SKU arriba para ver el detalle de las compras."}
                 </td>
               </tr>
             )}
