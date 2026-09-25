@@ -1685,7 +1685,7 @@ function exportResumenPDF(resumenAgrupado) {
   resumenAgrupado.forEach((g) => {
     g.tonos.forEach(([tono, cantidad], i) => {
       rows.push(
-        `<tr><td>${i === 0 ? escapeHtml(g.producto) : ""}</td><td>${i === 0 ? escapeHtml(g.sku || "—") : ""}</td><td>${escapeHtml(tono)}</td><td>${escapeHtml(cantidad)}</td></tr>`
+        `<tr><td>${i === 0 ? escapeHtml(g.producto) : ""}</td><td>${i === 0 ? escapeHtml(g.sku || "—") : ""}</td><td>${escapeHtml(tono)}</td><td>${escapeHtml(cantidad)}</td><td>${i === 0 ? escapeHtml(g.comentario || "") : ""}</td></tr>`
       );
     });
   });
@@ -1702,8 +1702,8 @@ function exportResumenPDF(resumenAgrupado) {
     <h1>Resumen: agotado y por comprar</h1>
     <p class="meta">Generado el ${escapeHtml(new Date().toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" }))}</p>
     <table>
-      <thead><tr><th>Producto</th><th>SKU</th><th>Tono</th><th>Cantidad</th></tr></thead>
-      <tbody>${rows.join("") || `<tr><td colspan="4">No hay productos agotados ni por comprar.</td></tr>`}</tbody>
+      <thead><tr><th>Producto</th><th>SKU</th><th>Tono</th><th>Cantidad</th><th>Comentario</th></tr></thead>
+      <tbody>${rows.join("") || `<tr><td colspan="5">No hay productos agotados ni por comprar.</td></tr>`}</tbody>
     </table>
   </body></html>`;
   const win = window.open("", "_blank");
@@ -1759,14 +1759,20 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate, onRevertir,
   for (const pc of items) {
     if (pc.status !== "Agotado" && pc.status !== "Por comprar") continue;
     const key = `${pc.producto}|||${pc.sku || ""}`;
-    if (!resumenMap.has(key)) resumenMap.set(key, { producto: pc.producto, sku: pc.sku, tonos: new Map() });
+    if (!resumenMap.has(key)) resumenMap.set(key, { producto: pc.producto, sku: pc.sku, tonos: new Map(), ids: [], comentario: "" });
     const grupo = resumenMap.get(key);
     const tonoKey = (pc.tono || "").trim() || "—";
     grupo.tonos.set(tonoKey, (grupo.tonos.get(tonoKey) || 0) + (Number(pc.cantidad) || 0));
+    grupo.ids.push(pc.id);
+    if (pc.comentario && !grupo.comentario) grupo.comentario = pc.comentario;
   }
   const resumenAgrupado = Array.from(resumenMap.values())
     .map((g) => ({ ...g, tonos: Array.from(g.tonos.entries()) }))
     .sort((a, b) => a.producto.localeCompare(b.producto));
+
+  function actualizarComentarioGrupo(ids, nuevo) {
+    ids.forEach((id) => onUpdate(id, { comentario: nuevo }));
+  }
 
   return (
     <div>
@@ -1782,11 +1788,11 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate, onRevertir,
         <table style={styles.table}>
           <thead>
             <tr>
-              <th style={styles.th}>Producto</th><th style={styles.th}>SKU</th><th style={styles.th}>Tono</th><th style={styles.th}>Cantidad</th>
+              <th style={styles.th}>Producto</th><th style={styles.th}>SKU</th><th style={styles.th}>Tono</th><th style={styles.th}>Cantidad</th><th style={styles.th}>Comentario</th>
             </tr>
           </thead>
           <tbody>
-            {resumenAgrupado.length === 0 && <tr><td colSpan={4} style={styles.emptyCell}>No hay productos agotados ni por comprar.</td></tr>}
+            {resumenAgrupado.length === 0 && <tr><td colSpan={5} style={styles.emptyCell}>No hay productos agotados ni por comprar.</td></tr>}
             {resumenAgrupado.map((g) =>
               g.tonos.map(([tono, cantidad], i) => (
                 <tr key={`${g.producto}|||${g.sku}|||${tono}`}>
@@ -1798,6 +1804,11 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate, onRevertir,
                   )}
                   <td style={styles.tdMuted}>{tono}</td>
                   <td style={styles.td}>{cantidad}</td>
+                  {i === 0 && (
+                    <td style={styles.td} rowSpan={g.tonos.length}>
+                      <TextCellInput value={g.comentario} onSave={(nuevo) => actualizarComentarioGrupo(g.ids, nuevo)} width={200} />
+                    </td>
+                  )}
                 </tr>
               ))
             )}

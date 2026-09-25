@@ -208,6 +208,7 @@ create table if not exists por_comprar (
   status text not null default 'Por comprar',
   created_at timestamptz default now()
 );
+alter table por_comprar add column if not exists comentario text;
 
 -- Catálogo unificado de clientes. `ventas.cliente` y `por_comprar.cliente` siguen
 -- siendo texto libre (para no romper la app ni datos existentes), pero un trigger
