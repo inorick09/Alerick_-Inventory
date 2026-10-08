@@ -1860,7 +1860,13 @@ function PorComprarTab({ items, productos, clientes, onAdd, onDelete, onUpdate, 
               <input style={styles.input} value={filters.producto} onChange={(e) => setFilters({ ...filters, producto: e.target.value })} placeholder="Buscar por producto…" />
             </Field>
             <Field label="SKU">
-              <input style={styles.input} value={filters.sku} onChange={(e) => setFilters({ ...filters, sku: e.target.value })} placeholder="Buscar por SKU…" />
+              <input
+                {...skuEnInventarioProps(filters.sku)}
+                style={{ ...styles.input, ...skuEnInventarioProps(filters.sku).style }}
+                value={filters.sku}
+                onChange={(e) => setFilters({ ...filters, sku: e.target.value })}
+                placeholder="Buscar por SKU…"
+              />
             </Field>
             <Field label="Cliente">
               <input style={styles.input} value={filters.cliente} onChange={(e) => setFilters({ ...filters, cliente: e.target.value })} placeholder="Buscar por cliente…" />
