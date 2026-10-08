@@ -1223,12 +1223,15 @@ function ComprasTab({ productos, compras, onAdd, onDelete, onUpdate, onImportMan
 }
 
 /* ---------------- VENTAS ---------------- */
-const VENTAS_FILTROS_VACIOS = { cliente: "", producto: "", fechaEntrega: "", fechaPago: "", soloConSaldo: false };
+// clienteExacto se activa al elegir una clienta desde "Saldos por cliente",
+// para no mezclar nombres parecidos (p. ej. "Ana" y "Ana María").
+const VENTAS_FILTROS_VACIOS = { cliente: "", clienteExacto: false, producto: "", fechaEntrega: "", fechaPago: "", soloConSaldo: false };
 
 function VentasTab({ ventas, abonos, clientes, onAdd, onDelete, onUpdate, onUpdateFechaEntrega, onAddAbono, onUpdateAbono, onDeleteAbono, onRevertir, puedeRevertir }) {
   const [showForm, setShowForm] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState(VENTAS_FILTROS_VACIOS);
+  const [showSaldos, setShowSaldos] = useState(false);
   const [form, setForm] = useState({ nombreProducto: "", cantidad: "1", precioVenta: "", cliente: "", fechaEntrega: "", fechaPago: "", abono: "", metodoPago: METODO_PAGO_OPCIONES[0] });
 
   const totalAbonos = ventas.reduce((s, v) => s + Number(v.abono || 0), 0);
@@ -1267,7 +1270,11 @@ function VentasTab({ ventas, abonos, clientes, onAdd, onDelete, onUpdate, onUpda
     filters.cliente.trim() !== "" || filters.producto.trim() !== "" || filters.fechaEntrega !== "" || filters.fechaPago !== "" || filters.soloConSaldo;
 
   const filtered = ventas.filter((v) => {
-    if (filters.cliente.trim() && !(v.cliente || "").toLowerCase().includes(filters.cliente.trim().toLowerCase())) return false;
+    if (filters.cliente.trim()) {
+      const clienteVenta = (v.cliente || "").trim().toLowerCase();
+      const buscado = filters.cliente.trim().toLowerCase();
+      if (filters.clienteExacto ? clienteVenta !== buscado : !clienteVenta.includes(buscado)) return false;
+    }
     if (filters.producto.trim() && !(v.nombre_producto || "").toLowerCase().includes(filters.producto.trim().toLowerCase())) return false;
     if (filters.fechaEntrega && v.fecha_entrega !== filters.fechaEntrega) return false;
     if (filters.fechaPago && v.fecha_pago !== filters.fechaPago) return false;
@@ -1283,6 +1290,18 @@ function VentasTab({ ventas, abonos, clientes, onAdd, onDelete, onUpdate, onUpda
   // agrupados por cliente.
   const grupos = agruparPorCliente(filtrosActivos ? filtered : pendientesPorEntregar);
   const sorted = grupos.flatMap((g) => g.items);
+
+  // Clientas con saldo pendiente y cuánto debe cada una en total, de mayor a
+  // menor deuda.
+  const saldosPorCliente = agruparPorCliente(ventas.filter((v) => (Number(v.saldo) || 0) > 0))
+    .map((g) => ({ ...g, saldo: g.items.reduce((s, v) => s + Number(v.saldo || 0), 0) }))
+    .sort((a, b) => b.saldo - a.saldo);
+
+  function verSaldoCliente(cliente) {
+    setFilters({ ...VENTAS_FILTROS_VACIOS, cliente, clienteExacto: true, soloConSaldo: true });
+    setShowFilters(true);
+    setShowSaldos(false);
+  }
 
   const abonoFiltrado = filtered.reduce((s, v) => s + Number(v.abono || 0), 0);
   const saldoFiltrado = filtered.reduce((s, v) => s + Number(v.saldo || 0), 0);
@@ -1353,6 +1372,9 @@ function VentasTab({ ventas, abonos, clientes, onAdd, onDelete, onUpdate, onUpda
         <button style={{ ...styles.ghostBtn, ...(filtrosActivos ? styles.ghostBtnActive : {}) }} onClick={() => setShowFilters((s) => !s)}>
           <SlidersHorizontal size={15} /> Filtros{filtrosActivos ? " •" : ""}
         </button>
+        <button style={{ ...styles.ghostBtn, ...(showSaldos ? styles.ghostBtnActive : {}) }} onClick={() => setShowSaldos((s) => !s)}>
+          <Wallet size={15} /> Saldos por cliente
+        </button>
         <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Registrar venta</button>
         <button
           style={styles.ghostBtn}
@@ -1374,11 +1396,47 @@ function VentasTab({ ventas, abonos, clientes, onAdd, onDelete, onUpdate, onUpda
         </p>
       )}
 
+      {showSaldos && (
+        <div style={styles.card}>
+          <h3 style={styles.sectionTitle}>Clientas con saldo pendiente</h3>
+          <div style={styles.tableWrap}>
+            <table style={styles.table}>
+              <thead>
+                <tr><th style={styles.th}>Cliente</th><th style={styles.th}>Productos pendientes</th><th style={styles.th}>Debe</th></tr>
+              </thead>
+              <tbody>
+                {saldosPorCliente.length === 0 && <tr><td colSpan={3} style={styles.emptyCell}>Ninguna clienta tiene saldo pendiente.</td></tr>}
+                {saldosPorCliente.map((g) => (
+                  <tr key={g.cliente}>
+                    <td style={styles.td}>
+                      <button type="button" style={styles.linkBtn} onClick={() => verSaldoCliente(g.cliente)} title="Ver los productos que debe">
+                        {g.cliente}
+                      </button>
+                    </td>
+                    <td style={styles.tdMuted}>{g.items.length}</td>
+                    <td style={styles.td}><span style={{ ...styles.stockPill, ...styles.stockLow }}>{fmt(g.saldo)}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+              {saldosPorCliente.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td style={{ ...styles.td, fontWeight: 700 }}>Total</td>
+                    <td style={styles.tdMuted}>{saldosPorCliente.reduce((s, g) => s + g.items.length, 0)}</td>
+                    <td style={{ ...styles.td, fontWeight: 700 }}>{fmt(totalSaldo)}</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      )}
+
       {showFilters && (
         <div style={styles.card}>
           <div style={styles.formGrid}>
             <Field label="Cliente">
-              <input style={styles.input} value={filters.cliente} onChange={(e) => setFilters({ ...filters, cliente: e.target.value })} placeholder="Buscar por cliente…" />
+              <input style={styles.input} value={filters.cliente} onChange={(e) => setFilters({ ...filters, cliente: e.target.value, clienteExacto: false })} placeholder="Buscar por cliente…" />
             </Field>
             <Field label="Producto">
               <input style={styles.input} value={filters.producto} onChange={(e) => setFilters({ ...filters, producto: e.target.value })} placeholder="Buscar por producto…" />
@@ -2335,6 +2393,7 @@ const styles = {
   searchInput: { border: "none", outline: "none", background: "transparent", fontSize: 13.5, fontFamily: "'Poppins', sans-serif", width: "100%", color: "#3B2A33" },
   primaryBtn: { display: "flex", alignItems: "center", gap: 6, background: "#D9678C", color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Poppins', sans-serif" },
   ghostBtn: { display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "1px solid #EEDEE0", color: "#8B6B76", borderRadius: 9, padding: "9px 16px", fontSize: 13.5, cursor: "pointer", fontFamily: "'Poppins', sans-serif" },
+  linkBtn: { background: "none", border: "none", padding: 0, color: "#B84C71", fontWeight: 600, fontSize: 13, fontFamily: "'Poppins', sans-serif", cursor: "pointer", textDecoration: "underline", textAlign: "left" },
   ghostBtnActive: { borderColor: "#D9678C", color: "#B84C71", background: "#FCEFE0" },
   checkboxRow: { display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: "#3B2A33", fontFamily: "'Poppins', sans-serif" },
   linkBtn: { background: "transparent", border: "none", color: "#B84C71", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" },
