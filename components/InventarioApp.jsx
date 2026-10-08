@@ -516,6 +516,22 @@ function RevertirButton({ onRevertir, puedeRevertir }) {
 /* ---------------- INVENTARIO ---------------- */
 const PAGE_SIZE = 10;
 
+// Agrupa registros por nombre de cliente (sin distinguir mayúsculas ni
+// espacios sobrantes), con los grupos en orden alfabético y "Sin cliente" al
+// final. Dentro de cada grupo se respeta el orden original de las filas.
+function agruparPorCliente(rows) {
+  const map = new Map();
+  for (const row of rows) {
+    const nombre = (row.cliente || "").trim();
+    const key = nombre.toLowerCase();
+    if (!map.has(key)) map.set(key, { cliente: nombre || "Sin cliente", items: [] });
+    map.get(key).items.push(row);
+  }
+  return Array.from(map.entries())
+    .sort(([a], [b]) => (a === "") - (b === "") || a.localeCompare(b, "es"))
+    .map(([, g]) => g);
+}
+
 function InventarioTab({ productos, clientes, onAdd, onDelete, onUpdate, onMoverAVentas, onRevertir, puedeRevertir }) {
   const [query, setQuery] = useState("");
   const [ubicacionFiltro, setUbicacionFiltro] = useState("");
@@ -1261,20 +1277,12 @@ function VentasTab({ ventas, abonos, clientes, onAdd, onDelete, onUpdate, onUpda
 
   const pendientesPorEntregar = [...ventas]
     .filter((v) => !v.fecha_entrega)
-    .sort((a, b) => (a.cliente || "").localeCompare(b.cliente || "") || (b.fecha_pago || "").localeCompare(a.fecha_pago || ""));
+    .sort((a, b) => (b.fecha_pago || "").localeCompare(a.fecha_pago || ""));
 
-  const pendientesAgrupados = [];
-  {
-    const map = new Map();
-    for (const v of pendientesPorEntregar) {
-      const key = v.cliente || "Sin cliente";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(v);
-    }
-    for (const [cliente, itemsCliente] of map) pendientesAgrupados.push({ cliente, items: itemsCliente });
-  }
-
-  const sorted = filtrosActivos ? filtered : pendientesPorEntregar;
+  // Tanto la vista por defecto como cualquier búsqueda/filtro se muestran
+  // agrupados por cliente.
+  const grupos = agruparPorCliente(filtrosActivos ? filtered : pendientesPorEntregar);
+  const sorted = grupos.flatMap((g) => g.items);
 
   const abonoFiltrado = filtered.reduce((s, v) => s + Number(v.abono || 0), 0);
   const saldoFiltrado = filtered.reduce((s, v) => s + Number(v.saldo || 0), 0);
@@ -1362,7 +1370,7 @@ function VentasTab({ ventas, abonos, clientes, onAdd, onDelete, onUpdate, onUpda
 
       {!filtrosActivos && (
         <p style={{ fontSize: 12.5, color: "#8B6B76", margin: "-6px 0 14px" }}>
-          Mostrando productos pendientes por entregar (sin fecha de entrega), agrupados por cliente. Usa los filtros para ver el resto de las ventas.
+          Mostrando productos pendientes por entregar (sin fecha de entrega), agrupados por cliente. Usa los filtros para ver el resto de las ventas (también agrupadas por cliente).
         </p>
       )}
 
@@ -1447,23 +1455,21 @@ function VentasTab({ ventas, abonos, clientes, onAdd, onDelete, onUpdate, onUpda
             </tr>
           </thead>
           <tbody>
-            {!filtrosActivos ? (
-              pendientesAgrupados.length === 0 ? (
-                <tr><td colSpan={10} style={styles.emptyCell}>No hay productos pendientes por entregar.</td></tr>
-              ) : (
-                pendientesAgrupados.map((g) => (
-                  <Fragment key={g.cliente}>
-                    <tr>
-                      <td colSpan={10} style={{ ...styles.td, fontWeight: 700, background: "#FBEFF2" }}>{g.cliente}</td>
-                    </tr>
-                    {g.items.map((v) => renderVentaRow(v))}
-                  </Fragment>
-                ))
-              )
-            ) : sorted.length === 0 ? (
-              <tr><td colSpan={10} style={styles.emptyCell}>Ningún resultado coincide con los filtros.</td></tr>
+            {grupos.length === 0 ? (
+              <tr>
+                <td colSpan={10} style={styles.emptyCell}>
+                  {filtrosActivos ? "Ningún resultado coincide con los filtros." : "No hay productos pendientes por entregar."}
+                </td>
+              </tr>
             ) : (
-              sorted.map((v) => renderVentaRow(v))
+              grupos.map((g) => (
+                <Fragment key={g.cliente}>
+                  <tr>
+                    <td colSpan={10} style={styles.grupoClienteCell}>{g.cliente}</td>
+                  </tr>
+                  {g.items.map((v) => renderVentaRow(v))}
+                </Fragment>
+              ))
             )}
           </tbody>
         </table>
@@ -1739,13 +1745,15 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate, onRevertir,
     setPage(1);
   }, [filters.producto, filters.sku, filters.cliente, filters.status]);
 
-  const sorted = items.filter((pc) => {
+  // Los resultados (con o sin filtros) se ordenan por cliente para que la
+  // tabla se muestre agrupada por cliente, incluso entre páginas.
+  const sorted = agruparPorCliente(items.filter((pc) => {
     if (filters.producto.trim() && !(pc.producto || "").toLowerCase().includes(filters.producto.trim().toLowerCase())) return false;
     if (filters.sku.trim() && !(pc.sku || "").toLowerCase().includes(filters.sku.trim().toLowerCase())) return false;
     if (filters.cliente.trim() && !(pc.cliente || "").toLowerCase().includes(filters.cliente.trim().toLowerCase())) return false;
     if (filters.status && pc.status !== filters.status) return false;
     return true;
-  });
+  })).flatMap((g) => g.items);
 
   // Sin filtros activos mostramos solo 10 registros a la vez (paginado); en
   // cuanto se aplique cualquier filtro, mostramos todos los que coincidan.
@@ -1897,35 +1905,42 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate, onRevertir,
           </thead>
           <tbody>
             {visibles.length === 0 && <tr><td colSpan={7} style={styles.emptyCell}>{filtrosActivos ? "Ningún resultado coincide con los filtros." : "Aún no has registrado productos por comprar."}</td></tr>}
-            {visibles.map((pc) => (
-              <tr key={pc.id}>
-                <td style={styles.td}>
-                  <TextCellInput value={pc.producto} onSave={(nuevo) => onUpdate(pc.id, { producto: nuevo })} width={160} />
-                </td>
-                <td style={styles.td}>
-                  <TextCellInput value={pc.sku} onSave={(nuevo) => onUpdate(pc.id, { sku: nuevo })} width={100} />
-                </td>
-                <td style={styles.td}>
-                  <TextCellInput value={pc.tono} onSave={(nuevo) => onUpdate(pc.id, { tono: nuevo })} width={100} />
-                </td>
-                <td style={styles.td}>
-                  <CantidadInput value={pc.cantidad} onSave={(nueva) => onUpdate(pc.id, { cantidad: Number(nueva) || 0 })} />
-                </td>
-                <td style={styles.td}>
-                  <ClienteSelect
-                    value={pc.cliente}
-                    clientes={clientes}
-                    onChange={(nuevo) => onUpdate(pc.id, { cliente: nuevo })}
-                    width={140}
-                  />
-                </td>
-                <td style={styles.td}>
-                  <select style={{ ...styles.priceInput, width: 170 }} value={pc.status || STATUS_OPCIONES[3]} onChange={(e) => onUpdate(pc.id, { status: e.target.value })}>
-                    {STATUS_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                </td>
-                <td style={styles.td}><button style={styles.iconBtn} onClick={() => onDelete(pc.id)} title="Eliminar registro"><Trash2 size={15} /></button></td>
-              </tr>
+            {agruparPorCliente(visibles).map((g) => (
+              <Fragment key={g.cliente}>
+                <tr>
+                  <td colSpan={7} style={styles.grupoClienteCell}>{g.cliente}</td>
+                </tr>
+                {g.items.map((pc) => (
+                  <tr key={pc.id}>
+                    <td style={styles.td}>
+                      <TextCellInput value={pc.producto} onSave={(nuevo) => onUpdate(pc.id, { producto: nuevo })} width={160} />
+                    </td>
+                    <td style={styles.td}>
+                      <TextCellInput value={pc.sku} onSave={(nuevo) => onUpdate(pc.id, { sku: nuevo })} width={100} />
+                    </td>
+                    <td style={styles.td}>
+                      <TextCellInput value={pc.tono} onSave={(nuevo) => onUpdate(pc.id, { tono: nuevo })} width={100} />
+                    </td>
+                    <td style={styles.td}>
+                      <CantidadInput value={pc.cantidad} onSave={(nueva) => onUpdate(pc.id, { cantidad: Number(nueva) || 0 })} />
+                    </td>
+                    <td style={styles.td}>
+                      <ClienteSelect
+                        value={pc.cliente}
+                        clientes={clientes}
+                        onChange={(nuevo) => onUpdate(pc.id, { cliente: nuevo })}
+                        width={140}
+                      />
+                    </td>
+                    <td style={styles.td}>
+                      <select style={{ ...styles.priceInput, width: 170 }} value={pc.status || STATUS_OPCIONES[3]} onChange={(e) => onUpdate(pc.id, { status: e.target.value })}>
+                        {STATUS_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </td>
+                    <td style={styles.td}><button style={styles.iconBtn} onClick={() => onDelete(pc.id)} title="Eliminar registro"><Trash2 size={15} /></button></td>
+                  </tr>
+                ))}
+              </Fragment>
             ))}
           </tbody>
         </table>
@@ -2288,6 +2303,7 @@ const styles = {
   statLabel: { margin: 0, fontSize: 11.5, color: "#8B6B76", textTransform: "uppercase", letterSpacing: 0.4 },
   statValue: { margin: "6px 0 0", fontSize: 20, fontWeight: 600, color: "#3B2A33", fontFamily: "'Playfair Display', serif" },
   toolbar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 12, flexWrap: "wrap" },
+  grupoClienteCell: { padding: "10px 14px", borderBottom: "1px solid #F4E9E9", color: "#3B2A33", fontWeight: 700, background: "#FBEFF2" },
   searchBox: { display: "flex", alignItems: "center", gap: 8, background: "#FBF3F1", border: "1px solid #EEDEE0", borderRadius: 10, padding: "8px 12px", flex: 1, maxWidth: 320 },
   searchInput: { border: "none", outline: "none", background: "transparent", fontSize: 13.5, fontFamily: "'Poppins', sans-serif", width: "100%", color: "#3B2A33" },
   primaryBtn: { display: "flex", alignItems: "center", gap: 6, background: "#D9678C", color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Poppins', sans-serif" },
