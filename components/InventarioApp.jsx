@@ -515,6 +515,7 @@ function RevertirButton({ onRevertir, puedeRevertir }) {
 
 /* ---------------- INVENTARIO ---------------- */
 const PAGE_SIZE = 10;
+const INVENTARIO_PAGE_SIZE = 15;
 
 // Agrupa registros por nombre de cliente (sin distinguir mayúsculas ni
 // espacios sobrantes), con los grupos en orden alfabético y "Sin cliente" al
@@ -553,14 +554,14 @@ function InventarioTab({ productos, clientes, onAdd, onDelete, onUpdate, onMover
     .filter((p) => !ubicacionFiltro || (p["Ubicación"] || "").split(",").map((s) => s.trim()).includes(ubicacionFiltro))
     .sort((a, b) => a.nombre.localeCompare(b.nombre));
 
-  // Sin filtros mostramos solo 10 a la vez (paginado) para no cargar la tabla
+  // Sin filtros mostramos solo 15 a la vez (paginado) para no cargar la tabla
   // completa; en cuanto haya una búsqueda o un filtro de ubicación activo,
   // mostramos todos los resultados que coincidan, sin paginar.
-  const totalPaginas = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const totalPaginas = Math.max(1, Math.ceil(filtered.length / INVENTARIO_PAGE_SIZE));
   const paginaActual = Math.min(page, totalPaginas);
   const visibles = hayFiltrosActivos
     ? filtered
-    : filtered.slice((paginaActual - 1) * PAGE_SIZE, paginaActual * PAGE_SIZE);
+    : filtered.slice((paginaActual - 1) * INVENTARIO_PAGE_SIZE, paginaActual * INVENTARIO_PAGE_SIZE);
 
   const totalUnidades = productos.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
   const valorInventario = productos.reduce((s, p) => s + (Number(p.cantidad) || 0) * (Number(p.costo) || 0), 0);
@@ -673,8 +674,8 @@ function InventarioTab({ productos, clientes, onAdd, onDelete, onUpdate, onMover
       {!hayFiltrosActivos && filtered.length > 0 && (
         <div style={styles.paginationBar}>
           <span style={styles.paginationInfo}>
-            Mostrando {(paginaActual - 1) * PAGE_SIZE + 1}
-            –{Math.min(paginaActual * PAGE_SIZE, filtered.length)} de {filtered.length} productos
+            Mostrando {(paginaActual - 1) * INVENTARIO_PAGE_SIZE + 1}
+            –{Math.min(paginaActual * INVENTARIO_PAGE_SIZE, filtered.length)} de {filtered.length} productos
           </span>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <button
