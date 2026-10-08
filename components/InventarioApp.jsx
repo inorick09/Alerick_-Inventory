@@ -536,6 +536,7 @@ function agruparPorCliente(rows) {
 function InventarioTab({ productos, clientes, onAdd, onDelete, onUpdate, onMoverAVentas, onRevertir, puedeRevertir }) {
   const [query, setQuery] = useState("");
   const [ubicacionFiltro, setUbicacionFiltro] = useState("");
+  const [showCostos, setShowCostos] = useState(false);
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ nombre: "", sku: "", cantidad: "", costo: "", ubicacion: "" });
@@ -567,6 +568,25 @@ function InventarioTab({ productos, clientes, onAdd, onDelete, onUpdate, onMover
   const valorInventario = productos.reduce((s, p) => s + (Number(p.cantidad) || 0) * (Number(p.costo) || 0), 0);
   const bajoStock = productos.filter((p) => (Number(p.cantidad) || 0) <= 2 && (Number(p.cantidad) || 0) >= 0).length;
 
+  // Costo del inventario (cantidad × costo c/u) según quién lo tiene. Los
+  // productos con varias ubicaciones a la vez no se pueden repartir, así que
+  // van en su propia fila; lo mismo los que no tienen ubicación.
+  const costoPorUbicacion = new Map(
+    [...UBICACION_OPCIONES, "Compartido", "Sin ubicación"].map((u) => [u, { ubicacion: u, productos: 0, unidades: 0, costo: 0 }])
+  );
+  for (const p of productos) {
+    const ubicaciones = (p["Ubicación"] || "").split(",").map((u) => u.trim()).filter(Boolean);
+    const key = ubicaciones.length === 0 ? "Sin ubicación" : ubicaciones.length > 1 ? "Compartido" : ubicaciones[0];
+    if (!costoPorUbicacion.has(key)) costoPorUbicacion.set(key, { ubicacion: key, productos: 0, unidades: 0, costo: 0 });
+    const fila = costoPorUbicacion.get(key);
+    const cantidad = Number(p.cantidad) || 0;
+    fila.productos += 1;
+    fila.unidades += cantidad;
+    fila.costo += cantidad * (Number(p.costo) || 0);
+  }
+  const filasCostoUbicacion = Array.from(costoPorUbicacion.values())
+    .filter((f) => UBICACION_OPCIONES.includes(f.ubicacion) || f.productos > 0);
+
   function submit(e) {
     e.preventDefault();
     if (!form.nombre.trim()) return;
@@ -593,9 +613,51 @@ function InventarioTab({ productos, clientes, onAdd, onDelete, onUpdate, onMover
           <option value="">Todas las ubicaciones</option>
           {UBICACION_OPCIONES.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
+        <button style={{ ...styles.ghostBtn, ...(showCostos ? styles.ghostBtnActive : {}) }} onClick={() => setShowCostos((s) => !s)}>
+          <Wallet size={15} /> Costo por ubicación
+        </button>
         <RevertirButton onRevertir={onRevertir} puedeRevertir={puedeRevertir} />
         <button style={styles.primaryBtn} onClick={() => setShowForm((s) => !s)}><Plus size={16} /> Nuevo producto</button>
       </div>
+
+      {showCostos && (
+        <div style={styles.card}>
+          <h3 style={styles.sectionTitle}>Costo del inventario por ubicación</h3>
+          <div style={styles.tableWrap}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>Ubicación</th><th style={styles.th}>Productos</th>
+                  <th style={styles.th}>Unidades</th><th style={styles.th}>Costo total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filasCostoUbicacion.map((f) => (
+                  <tr key={f.ubicacion}>
+                    <td style={{ ...styles.td, fontWeight: 600 }}>{f.ubicacion}</td>
+                    <td style={styles.tdMuted}>{f.productos}</td>
+                    <td style={styles.tdMuted}>{f.unidades}</td>
+                    <td style={styles.td}>{fmt(f.costo)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td style={{ ...styles.td, fontWeight: 700 }}>Total</td>
+                  <td style={styles.tdMuted}>{productos.length}</td>
+                  <td style={styles.tdMuted}>{totalUnidades}</td>
+                  <td style={{ ...styles.td, fontWeight: 700 }}>{fmt(valorInventario)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          {costoPorUbicacion.get("Compartido").productos > 0 && (
+            <p style={{ fontSize: 12.5, color: "#8B6B76", margin: "10px 0 0" }}>
+              "Compartido" son productos con más de una ubicación a la vez; su costo no se reparte entre Aleja y Erik.
+            </p>
+          )}
+        </div>
+      )}
 
       {showForm && (
         <form onSubmit={submit} style={styles.card}>
