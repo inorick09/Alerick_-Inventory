@@ -479,7 +479,7 @@ export default function InventarioApp() {
         )}
         {tab === "porcomprar" && (
           <PorComprarTab
-            items={porComprar} clientes={clientes} onAdd={addPorComprar} onDelete={deletePorComprar} onUpdate={updatePorComprar}
+            items={porComprar} productos={productos} clientes={clientes} onAdd={addPorComprar} onDelete={deletePorComprar} onUpdate={updatePorComprar}
             onRevertir={() => revertirSeccion("porComprar")} puedeRevertir={historial.porComprar.length > 0}
           />
         )}
@@ -1720,7 +1720,7 @@ function exportResumenPDF(resumenAgrupado) {
 }
 
 /* ---------------- POR COMPRAR ---------------- */
-function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate, onRevertir, puedeRevertir }) {
+function PorComprarTab({ items, productos, clientes, onAdd, onDelete, onUpdate, onRevertir, puedeRevertir }) {
   const [showForm, setShowForm] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState(PORCOMPRAR_FILTROS_VACIOS);
@@ -1744,6 +1744,24 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate, onRevertir,
   useEffect(() => {
     setPage(1);
   }, [filters.producto, filters.sku, filters.cliente, filters.status]);
+
+  // Stock disponible en Inventario por SKU (sin distinguir mayúsculas ni
+  // espacios), para marcar en verde lo que ya tenemos y no hay que comprar.
+  const stockPorSku = new Map();
+  for (const p of productos || []) {
+    const sku = (p.sku || "").trim().toLowerCase();
+    if (!sku) continue;
+    stockPorSku.set(sku, (stockPorSku.get(sku) || 0) + (Number(p.cantidad) || 0));
+  }
+  function stockDeSku(sku) {
+    return stockPorSku.get((sku || "").trim().toLowerCase()) || 0;
+  }
+  function skuEnInventarioProps(sku, etiqueta) {
+    const stock = stockDeSku(sku);
+    return stock > 0
+      ? { style: { ...styles.skuEnInventario, ...(etiqueta ? { padding: "2px 8px", borderRadius: 6 } : {}) }, title: `En inventario: ${stock} unidad${stock === 1 ? "" : "es"}` }
+      : {};
+  }
 
   // Los resultados (con o sin filtros) se ordenan por cliente para que la
   // tabla se muestre agrupada por cliente, incluso entre páginas.
@@ -1807,7 +1825,9 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate, onRevertir,
                   {i === 0 && (
                     <>
                       <td style={styles.td} rowSpan={g.tonos.length}><strong>{g.producto}</strong></td>
-                      <td style={styles.tdMuted} rowSpan={g.tonos.length}>{g.sku || "—"}</td>
+                      <td style={styles.tdMuted} rowSpan={g.tonos.length}>
+                        {g.sku ? <span {...skuEnInventarioProps(g.sku, true)}>{g.sku}</span> : "—"}
+                      </td>
                     </>
                   )}
                   <td style={styles.tdMuted}>{tono}</td>
@@ -1916,7 +1936,7 @@ function PorComprarTab({ items, clientes, onAdd, onDelete, onUpdate, onRevertir,
                       <TextCellInput value={pc.producto} onSave={(nuevo) => onUpdate(pc.id, { producto: nuevo })} width={160} />
                     </td>
                     <td style={styles.td}>
-                      <TextCellInput value={pc.sku} onSave={(nuevo) => onUpdate(pc.id, { sku: nuevo })} width={100} />
+                      <TextCellInput value={pc.sku} onSave={(nuevo) => onUpdate(pc.id, { sku: nuevo })} width={100} {...skuEnInventarioProps(pc.sku)} />
                     </td>
                     <td style={styles.td}>
                       <TextCellInput value={pc.tono} onSave={(nuevo) => onUpdate(pc.id, { tono: nuevo })} width={100} />
@@ -2159,7 +2179,7 @@ function FechaPagoInput({ value, onSave }) {
     />
   );
 }
-function TextCellInput({ value, onSave, width }) {
+function TextCellInput({ value, onSave, width, style, title }) {
   const [draft, setDraft] = useState(value || "");
 
   useEffect(() => {
@@ -2173,7 +2193,8 @@ function TextCellInput({ value, onSave, width }) {
   return (
     <input
       type="text"
-      style={{ ...styles.priceInput, width: width || 140 }}
+      style={{ ...styles.priceInput, width: width || 140, ...style }}
+      title={title}
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
@@ -2331,6 +2352,7 @@ const styles = {
   emptyCell: { padding: "22px 14px", textAlign: "center", color: "#8B6B76", fontSize: 13 },
   pill: { background: "#F1E3E8", color: "#B84C71", padding: "3px 9px", borderRadius: 20, fontSize: 11, fontWeight: 500 },
   stockPill: { background: "#EAF6F4", color: "#3F8F87", padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600 },
+  skuEnInventario: { background: "#E6F4EA", color: "#2E7D32", fontWeight: 600, borderColor: "#A5D6A7" },
   stockLow: { background: "#FCF1DC", color: "#A9791F" },
   iconBtn: { background: "transparent", border: "none", color: "#B89099", cursor: "pointer", padding: 6, borderRadius: 6 },
   abonoBtn: { display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #EEDEE0", borderRadius: 8, padding: "6px 10px", fontSize: 13, fontFamily: "'Poppins', sans-serif", background: "#fff", color: "#3B2A33", cursor: "pointer" },
